@@ -2,7 +2,6 @@
 const SUPABASE_URL = "https://ihcsodtizmkwhzkzmbxk.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_jXML1u1eUjEtCTqjLwukgQ_YspJOh1S";
 
-
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const $ = (id) => document.getElementById(id);
@@ -15,14 +14,17 @@ let groupMembers = [];
 let groupDecks = [];
 const artworkCache = new Map();
 const printsCache = new Map();
+const printFingerprintCache = new Map();
 
-// Stato dello scanner continuo + proposta Sì/No + lista scartate
+// Stato dello scanner continuo + proposta Sì/No + lista scartate + firma frame
 let cameraStream = null;
 let scanLoopTimer = null;
 let quickResumeTimer = null;
 let isScanningFrame = false;
 let pendingProposalCard = null;
 let proposalPrintOptions = [];
+let lastFrameSig = null;
+let unchangedFrameCount = 0;
 const rejectedCardKeys = new Set();
 
 const PREFERRED_FORMATS = [
@@ -576,7 +578,80 @@ function buildCollectionPayloadFromScryfall(c) {
   };
 }
 
-// ---- SCANNER TELECAMERA + EDIZIONE + PROPOSTA SÌ / NO ----
+// ---- IMPRONTA VISIVA ILLUSTRATION (16x16) PER RILEVAMENTO EDIZIONE ----
+function buildImageFingerprintFromSource(source, sx, sy, sw, sh) {
+  const c = document.createElement("canvas");
+  c.width = 16;
+  c.height = 16;
+  const ctx = c.getContext("2d");
+  ctx.drawImage(source, sx, sy, sw, sh, 0, 0, 16, 16);
+  const data = ctx.getImageData(0, 0, 16, 16).data;
+  const vec = new Float32Array(16 * 16 * 3);
+  for (let i = 0, j = 0; i < data.length; i += 4, j += 3) {
+    vec[j] = data[i] / 255;
+    vec[j + 1] = data[i + 1] / 255;
+    vec[j + 2] = data[i + 2] / 255;
+  }
+  return vec;
+}
+
+function fingerprintDistance(a, b) {
+  if (!a || !b || a.length !== b.length) return 999;
+  let sum = 0;
+  for (let i = 0; i < a.length; i++) {
+    const d = a[i] - b[i];
+    sum += d * d;
+  }
+  return Math.sqrt(sum / a.length);
+}
+
+async function getPrintArtworkFingerprint(scryfallCard) {
+  const artUrl =
+    scryfallCard?.image_uris?.art_crop ||
+    scryfallCard?.card_faces?.[0]?.image_uris?.art_crop ||
+    "";
+  if (!artUrl) return null;
+
+  if (printFingerprintCache.has(artUrl)) {
+    return printFingerprintCache.get(artUrl);
+  }
+
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      try {
+        const fp = buildImageFingerprintFromSource(img, 0, 0, img.width, img.height);
+        printFingerprintCache.set(artUrl, fp);
+        resolve(fp);
+      } catch {
+        resolve(null);
+      }
+    };
+    img.onerror = () => resolve(null);
+    img.src = artUrl;
+  });
+}
+
+function captureArtworkFingerprintFromVideo() {
+  const video = $("scan-video");
+  if (!video || !video.videoWidth || !video.videoHeight) return null;
+  const w = video.videoWidth;
+  const h = video.videoHeight;
+  const sx = Math.floor(w * 0.12);
+  const sy = Math.floor(h * 0.16);
+  const sw = Math.floor(w * 0.76);
+  const sh = Math.floor(h * 0.44);
+  return buildImageFingerprintFromSource(video, sx, sy, sw, sh);
+}
+
+function captureFrameSignature() {
+  const video = $("scan-video");
+  if (!video || !video.videoWidth || !video.videoHeight) return null;
+  return buildImageFingerprintFromSource(video, 0, 0, video.videoWidth, video.videoHeight);
+}
+
+// ---- SCANNER TELECAMERA + ARTWORK MATCH + EDIZIONE + PROPOSTA SÌ / NO ----
 function stopScanLoop() {
   if (scanLoopTimer) {
     clearInterval(scanLoopTimer);
@@ -594,9 +669,11 @@ function stopCameraStream() {
     cameraStream.getTracks().forEach((t) => t.stop());
     cameraStream = null;
   }
+  lastFrameSig = null;
+  unchangedFrameCount = 0;
 }
 
-function startScanLoop(delayMs = 250) {
+function startScanLoop(delayMs = 200) {
   if (scanLoopTimer) {
     clearInterval(scanLoopTimer);
     scanLoopTimer = null;
@@ -615,7 +692,7 @@ function startScanLoop(delayMs = 250) {
 
   quickResumeTimer = setTimeout(() => {
     runTick();
-    scanLoopTimer = setInterval(runTick, 950);
+    scanLoopTimer = setInterval(runTick, 850);
   }, delayMs);
 }
 
@@ -646,8 +723,8 @@ async function ensureCameraRunning() {
     video.srcObject = cameraStream;
     $("camera-placeholder")?.classList.add("hidden");
     setScanStateBadge("Inquadra una carta...");
-    setStatus($("collection-status"), "Scansione rapida attiva.", "");
-    startScanLoop(300);
+    setStatus($("collection-status"), "Scansione rapida + confronto illustrazione attiva.", "");
+    startScanLoop(250);
   } catch (err) {
     setScanStateBadge("Fotocamera bloccata");
     $("camera-placeholder")?.classList.remove("hidden");
@@ -659,6 +736,8 @@ $("btn-start-camera")?.addEventListener("click", ensureCameraRunning);
 
 $("btn-reset-rejected")?.addEventListener("click", () => {
   rejectedCardKeys.clear();
+  lastFrameSig = null;
+  unchangedFrameCount = 0;
   updateRejectedBadge();
   setStatus($("collection-status"), "Lista carte scartate azzerata.", "ok");
 });
@@ -672,10 +751,10 @@ function captureFrameCanvas() {
   const sx = Math.floor(srcW * 0.06);
   const sy = Math.floor(srcH * 0.05);
   const sw = Math.floor(srcW * 0.88);
-  const sh = Math.floor(srcH * 0.28);
+  const sh = Math.floor(srcH * 0.25);
 
   const canvas = $("scan-crop-canvas");
-  const scale = Math.min(2, 720 / Math.max(1, sw));
+  const scale = Math.min(2, 540 / Math.max(1, sw));
   canvas.width = Math.max(1, Math.floor(sw * scale));
   canvas.height = Math.max(1, Math.floor(sh * scale));
 
@@ -738,6 +817,25 @@ async function loadPrintsForCard(scryfallCard) {
   }
 }
 
+async function rankPrintsByCapturedArtwork(prints, capturedArtFp, fallbackCard) {
+  if (!capturedArtFp || !Array.isArray(prints) || !prints.length) {
+    return { orderedPrints: prints || [fallbackCard], bestCard: fallbackCard };
+  }
+
+  const scored = await Promise.all(
+    prints.map(async (p) => {
+      const pFp = await getPrintArtworkFingerprint(p);
+      const dist = pFp ? fingerprintDistance(capturedArtFp, pFp) : 999;
+      return { print: p, dist };
+    })
+  );
+
+  scored.sort((a, b) => a.dist - b.dist);
+  const orderedPrints = scored.map((s) => s.print);
+  const bestCard = orderedPrints[0] || fallbackCard;
+  return { orderedPrints, bestCard };
+}
+
 function applyEditionToProposal(scryfallCard) {
   if (!pendingProposalCard) return;
   const payload = buildCollectionPayloadFromScryfall(scryfallCard);
@@ -756,7 +854,7 @@ function applyEditionToProposal(scryfallCard) {
   }
 }
 
-async function showCardProposal(scryfallCard) {
+async function showCardProposal(scryfallCard, capturedArtFp = null) {
   const initialPayload = buildCollectionPayloadFromScryfall(scryfallCard);
   const rejectKey = String(initialPayload.name).toLowerCase();
 
@@ -767,29 +865,39 @@ async function showCardProposal(scryfallCard) {
 
   pendingProposalCard = { payload: initialPayload, rejectKey };
   stopScanLoop();
-  setScanStateBadge("Carta trovata");
+  setScanStateBadge("Confronto illustrazione...");
 
   const selectEl = $("proposal-edition-select");
-  selectEl.innerHTML = `<option value="">Caricamento edizioni...</option>`;
+  selectEl.innerHTML = `<option value="">Analisi illustrazioni edizioni...</option>`;
   applyEditionToProposal(scryfallCard);
   $("proposal-modal")?.classList.remove("hidden");
 
-  const prints = await loadPrintsForCard(scryfallCard);
+  const rawPrints = await loadPrintsForCard(scryfallCard);
   if (!pendingProposalCard || pendingProposalCard.rejectKey !== rejectKey) return;
 
-  proposalPrintOptions = prints;
-  selectEl.innerHTML = prints
+  const { orderedPrints, bestCard } = await rankPrintsByCapturedArtwork(
+    rawPrints,
+    capturedArtFp,
+    scryfallCard
+  );
+  if (!pendingProposalCard || pendingProposalCard.rejectKey !== rejectKey) return;
+
+  proposalPrintOptions = orderedPrints;
+  applyEditionToProposal(bestCard);
+  setScanStateBadge("Carta trovata");
+
+  selectEl.innerHTML = orderedPrints
     .map((p, idx) => {
       const code = (p.set || "").toUpperCase();
       const cn = p.collector_number ? `#${p.collector_number}` : "";
       const sname = p.set_name || code;
-      const label = `${sname} [${code}] ${cn}`.trim();
+      const tag = idx === 0 && capturedArtFp ? " [Match art]" : "";
+      const label = `${sname} [${code}] ${cn}${tag}`.trim();
       return `<option value="${idx}">${escapeHtml(label)}</option>`;
     })
     .join("");
 
-  const matchedIdx = prints.findIndex((p) => p.id === scryfallCard.id);
-  selectEl.value = String(matchedIdx >= 0 ? matchedIdx : 0);
+  selectEl.value = "0";
 }
 
 $("proposal-edition-select")?.addEventListener("change", (e) => {
@@ -802,10 +910,12 @@ $("proposal-edition-select")?.addEventListener("change", (e) => {
 function hideCardProposalAndResume() {
   pendingProposalCard = null;
   proposalPrintOptions = [];
+  lastFrameSig = null;
+  unchangedFrameCount = 0;
   $("proposal-modal")?.classList.add("hidden");
   setScanStateBadge("Inquadra una carta...");
   if (cameraStream) {
-    startScanLoop(200);
+    startScanLoop(180);
   }
 }
 
@@ -839,6 +949,24 @@ $("btn-proposal-yes")?.addEventListener("click", async () => {
 
 async function scanCurrentVideoFrame() {
   if (typeof Tesseract === "undefined" || isScanningFrame || pendingProposalCard) return;
+
+  const frameSig = captureFrameSignature();
+  if (frameSig && lastFrameSig) {
+    const diff = fingerprintDistance(frameSig, lastFrameSig);
+    if (diff < 0.025) {
+      unchangedFrameCount += 1;
+      if (unchangedFrameCount >= 2) {
+        return;
+      }
+    } else {
+      unchangedFrameCount = 0;
+    }
+  }
+  if (frameSig) {
+    lastFrameSig = frameSig;
+  }
+
+  const capturedArtFp = captureArtworkFingerprintFromVideo();
   const canvas = captureFrameCanvas();
   if (!canvas) return;
 
@@ -852,7 +980,7 @@ async function scanCurrentVideoFrame() {
 
     const card = await lookupScryfallCard(title);
     if (card && !pendingProposalCard) {
-      await showCardProposal(card);
+      await showCardProposal(card, capturedArtFp);
     }
   } catch {
     // ignora frame non leggibili durante lo scan continuo
