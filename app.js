@@ -2,6 +2,7 @@
 const SUPABASE_URL = "https://ihcsodtizmkwhzkzmbxk.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_jXML1u1eUjEtCTqjLwukgQ_YspJOh1S";
 
+
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const $ = (id) => document.getElementById(id);
@@ -14,17 +15,20 @@ let groupMembers = [];
 let groupDecks = [];
 const artworkCache = new Map();
 const printsCache = new Map();
-const printFingerprintCache = new Map();
+const dHashCache = new Map();
+const setIndexCache = new Map(); // setCode -> Array<{ card, dhash }>
 
-// Stato dello scanner continuo + proposta Sì/No + lista scartate + firma frame
+// Stato scanner pro (mirino MTG + stabilità/nitidezza + worker OCR + dHash)
 let cameraStream = null;
-let scanLoopTimer = null;
-let quickResumeTimer = null;
-let isScanningFrame = false;
+let monitorLoopId = null;
+let ocrWorker = null;
+let ocrWorkerReady = false;
+let isProcessingCapture = false;
 let pendingProposalCard = null;
 let proposalPrintOptions = [];
-let lastFrameSig = null;
-let unchangedFrameCount = 0;
+let prevLumaGrid = null;
+let stableFramesCount = 0;
+let cooldownUntil = 0;
 const rejectedCardKeys = new Set();
 
 const PREFERRED_FORMATS = [
@@ -66,6 +70,14 @@ function setScanStateBadge(text) {
   if ($("scan-state-badge")) {
     $("scan-state-badge").textContent = text;
   }
+}
+
+function setReticleState(state) {
+  const el = $("card-reticle");
+  if (!el) return;
+  el.classList.remove("locked", "scanning");
+  if (state === "locked") el.classList.add("locked");
+  if (state === "scanning") el.classList.add("scanning");
 }
 
 // Navigazione tab in basso
@@ -578,42 +590,57 @@ function buildCollectionPayloadFromScryfall(c) {
   };
 }
 
-// ---- IMPRONTA VISIVA ILLUSTRATION (16x16) PER RILEVAMENTO EDIZIONE ----
-function buildImageFingerprintFromSource(source, sx, sy, sw, sh) {
+// ---- PERCEPTUAL DHASH (64-BIT) IN SCALA DI GRIGI NORMALIZZATA ----
+function computeDHash64(source, sx, sy, sw, sh) {
   const c = document.createElement("canvas");
-  c.width = 16;
-  c.height = 16;
+  c.width = 9;
+  c.height = 8;
   const ctx = c.getContext("2d");
-  ctx.drawImage(source, sx, sy, sw, sh, 0, 0, 16, 16);
-  const data = ctx.getImageData(0, 0, 16, 16).data;
-  const vec = new Float32Array(16 * 16 * 3);
-  for (let i = 0, j = 0; i < data.length; i += 4, j += 3) {
-    vec[j] = data[i] / 255;
-    vec[j + 1] = data[i + 1] / 255;
-    vec[j + 2] = data[i + 2] / 255;
+  ctx.drawImage(source, sx, sy, sw, sh, 0, 0, 9, 8);
+  const data = ctx.getImageData(0, 0, 9, 8).data;
+
+  const gray = new Float32Array(72);
+  let minV = 255;
+  let maxV = 0;
+  for (let i = 0; i < 72; i++) {
+    const p = i * 4;
+    const lum = 0.299 * data[p] + 0.587 * data[p + 1] + 0.114 * data[p + 2];
+    gray[i] = lum;
+    if (lum < minV) minV = lum;
+    if (lum > maxV) maxV = lum;
   }
-  return vec;
+
+  const range = Math.max(1, maxV - minV);
+  const bits = new Uint8Array(64);
+  let idx = 0;
+  for (let y = 0; y < 8; y++) {
+    for (let x = 0; x < 8; x++) {
+      const left = (gray[y * 9 + x] - minV) / range;
+      const right = (gray[y * 9 + x + 1] - minV) / range;
+      bits[idx++] = left > right ? 1 : 0;
+    }
+  }
+  return bits;
 }
 
-function fingerprintDistance(a, b) {
-  if (!a || !b || a.length !== b.length) return 999;
-  let sum = 0;
-  for (let i = 0; i < a.length; i++) {
-    const d = a[i] - b[i];
-    sum += d * d;
+function hammingDistance64(a, b) {
+  if (!a || !b || a.length !== 64 || b.length !== 64) return 64;
+  let dist = 0;
+  for (let i = 0; i < 64; i++) {
+    if (a[i] !== b[i]) dist++;
   }
-  return Math.sqrt(sum / a.length);
+  return dist;
 }
 
-async function getPrintArtworkFingerprint(scryfallCard) {
+async function getDHashForScryfallArt(scryfallCard) {
   const artUrl =
     scryfallCard?.image_uris?.art_crop ||
     scryfallCard?.card_faces?.[0]?.image_uris?.art_crop ||
     "";
   if (!artUrl) return null;
 
-  if (printFingerprintCache.has(artUrl)) {
-    return printFingerprintCache.get(artUrl);
+  if (dHashCache.has(artUrl)) {
+    return dHashCache.get(artUrl);
   }
 
   return new Promise((resolve) => {
@@ -621,9 +648,9 @@ async function getPrintArtworkFingerprint(scryfallCard) {
     img.crossOrigin = "anonymous";
     img.onload = () => {
       try {
-        const fp = buildImageFingerprintFromSource(img, 0, 0, img.width, img.height);
-        printFingerprintCache.set(artUrl, fp);
-        resolve(fp);
+        const hash = computeDHash64(img, 0, 0, img.width, img.height);
+        dHashCache.set(artUrl, hash);
+        resolve(hash);
       } catch {
         resolve(null);
       }
@@ -633,209 +660,295 @@ async function getPrintArtworkFingerprint(scryfallCard) {
   });
 }
 
-function captureArtworkFingerprintFromVideo() {
+// Calcola coordinate esatte del mirino MTG nel video reale (tenendo conto di object-fit: cover)
+function getReticleVideoRect() {
   const video = $("scan-video");
-  if (!video || !video.videoWidth || !video.videoHeight) return null;
-  const w = video.videoWidth;
-  const h = video.videoHeight;
-  const sx = Math.floor(w * 0.12);
-  const sy = Math.floor(h * 0.16);
-  const sw = Math.floor(w * 0.76);
-  const sh = Math.floor(h * 0.44);
-  return buildImageFingerprintFromSource(video, sx, sy, sw, sh);
+  const reticle = $("card-reticle");
+  if (!video || !reticle || !video.videoWidth || !video.videoHeight) return null;
+
+  const vRect = video.getBoundingClientRect();
+  const rRect = reticle.getBoundingClientRect();
+  if (!vRect.width || !vRect.height) return null;
+
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  const scale = Math.max(vRect.width / vw, vRect.height / vh);
+  const renderedW = vw * scale;
+  const renderedH = vh * scale;
+  const offsetX = (renderedW - vRect.width) / 2;
+  const offsetY = (renderedH - vRect.height) / 2;
+
+  const rx = Math.max(0, ((rRect.left - vRect.left) + offsetX) / scale);
+  const ry = Math.max(0, ((rRect.top - vRect.top) + offsetY) / scale);
+  const rw = Math.min(vw - rx, rRect.width / scale);
+  const rh = Math.min(vh - ry, rRect.height / scale);
+
+  if (rw < 40 || rh < 40) return null;
+  return { video, rx, ry, rw, rh };
 }
 
-function captureFrameSignature() {
-  const video = $("scan-video");
-  if (!video || !video.videoWidth || !video.videoHeight) return null;
-  return buildImageFingerprintFromSource(video, 0, 0, video.videoWidth, video.videoHeight);
+// Controllo stabilità + nitidezza (< 2 ms) dentro il mirino MTG
+function evaluateReticleStabilityAndSharpness() {
+  const geom = getReticleVideoRect();
+  if (!geom) return { ready: false };
+
+  const { video, rx, ry, rw, rh } = geom;
+  const gw = 32;
+  const gh = 44;
+  const c = document.createElement("canvas");
+  c.width = gw;
+  c.height = gh;
+  const ctx = c.getContext("2d");
+  ctx.drawImage(video, rx, ry, rw, rh, 0, 0, gw, gh);
+  const data = ctx.getImageData(0, 0, gw, gh).data;
+
+  const luma = new Float32Array(gw * gh);
+  for (let i = 0; i < luma.length; i++) {
+    const p = i * 4;
+    luma[i] = 0.299 * data[p] + 0.587 * data[p + 1] + 0.114 * data[p + 2];
+  }
+
+  // Varianza del Laplaciano per stimare la nitidezza
+  let lapSum = 0;
+  let lapSqSum = 0;
+  let count = 0;
+  for (let y = 1; y < gh - 1; y++) {
+    for (let x = 1; x < gw - 1; x++) {
+      const idx = y * gw + x;
+      const lap =
+        4 * luma[idx] -
+        luma[idx - 1] -
+        luma[idx + 1] -
+        luma[idx - gw] -
+        luma[idx + gw];
+      lapSum += lap;
+      lapSqSum += lap * lap;
+      count++;
+    }
+  }
+  const mean = lapSum / Math.max(1, count);
+  const sharpness = lapSqSum / Math.max(1, count) - mean * mean;
+
+  // Differenza rispetto al frame precedente per verificare che sia ferma
+  let motion = 999;
+  if (prevLumaGrid && prevLumaGrid.length === luma.length) {
+    let diffSum = 0;
+    for (let i = 0; i < luma.length; i++) {
+      diffSum += Math.abs(luma[i] - prevLumaGrid[i]);
+    }
+    motion = diffSum / luma.length;
+  }
+  prevLumaGrid = luma;
+
+  const isSharp = sharpness > 140;
+  const isStill = motion < 4.5;
+  return { ready: isSharp && isStill, isSharp, isStill, geom };
 }
 
-// ---- SCANNER TELECAMERA + ARTWORK MATCH + EDIZIONE + PROPOSTA SÌ / NO ----
-function stopScanLoop() {
-  if (scanLoopTimer) {
-    clearInterval(scanLoopTimer);
-    scanLoopTimer = null;
-  }
-  if (quickResumeTimer) {
-    clearTimeout(quickResumeTimer);
-    quickResumeTimer = null;
-  }
-}
-
-function stopCameraStream() {
-  stopScanLoop();
-  if (cameraStream) {
-    cameraStream.getTracks().forEach((t) => t.stop());
-    cameraStream = null;
-  }
-  lastFrameSig = null;
-  unchangedFrameCount = 0;
-}
-
-function startScanLoop(delayMs = 200) {
-  if (scanLoopTimer) {
-    clearInterval(scanLoopTimer);
-    scanLoopTimer = null;
-  }
-  if (quickResumeTimer) {
-    clearTimeout(quickResumeTimer);
-    quickResumeTimer = null;
-  }
-
-  const runTick = () => {
-    if (pendingProposalCard || isScanningFrame) return;
-    const video = $("scan-video");
-    if (!video || video.readyState < 2) return;
-    scanCurrentVideoFrame();
-  };
-
-  quickResumeTimer = setTimeout(() => {
-    runTick();
-    scanLoopTimer = setInterval(runTick, 850);
-  }, delayMs);
-}
-
-async function ensureCameraRunning() {
-  updateRejectedBadge();
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    setStatus($("collection-status"), "Fotocamera non disponibile su questo browser.", "err");
-    return;
-  }
-
-  if (cameraStream) {
-    startScanLoop(150);
-    return;
-  }
+// ---- WORKER OCR PERSISTENTE (NON BLOCCA LA UI) ----
+async function ensureOcrWorker() {
+  if (ocrWorkerReady && ocrWorker) return ocrWorker;
+  if (typeof Tesseract === "undefined") return null;
 
   try {
-    setScanStateBadge("Avvio fotocamera...");
-    cameraStream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: { ideal: "environment" },
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
-      },
-      audio: false,
+    ocrWorker = await Tesseract.createWorker("eng");
+    await ocrWorker.setParameters({
+      tessedit_pageseg_mode: Tesseract.PSM?.SINGLE_LINE || "7",
+      tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'- ,./",
     });
-
-    const video = $("scan-video");
-    video.srcObject = cameraStream;
-    $("camera-placeholder")?.classList.add("hidden");
-    setScanStateBadge("Inquadra una carta...");
-    setStatus($("collection-status"), "Scansione rapida + confronto illustrazione attiva.", "");
-    startScanLoop(250);
-  } catch (err) {
-    setScanStateBadge("Fotocamera bloccata");
-    $("camera-placeholder")?.classList.remove("hidden");
-    setStatus($("collection-status"), `Errore fotocamera: ${err.message}`, "err");
+    ocrWorkerReady = true;
+    return ocrWorker;
+  } catch {
+    ocrWorker = null;
+    ocrWorkerReady = false;
+    return null;
   }
 }
 
-$("btn-start-camera")?.addEventListener("click", ensureCameraRunning);
+function captureTitleAndArtFromReticle(geom) {
+  const { video, rx, ry, rw, rh } = geom;
 
-$("btn-reset-rejected")?.addEventListener("click", () => {
-  rejectedCardKeys.clear();
-  lastFrameSig = null;
-  unchangedFrameCount = 0;
-  updateRejectedBadge();
-  setStatus($("collection-status"), "Lista carte scartate azzerata.", "ok");
-});
-
-function captureFrameCanvas() {
-  const video = $("scan-video");
-  if (!video || !video.videoWidth || !video.videoHeight) return null;
-
-  const srcW = video.videoWidth;
-  const srcH = video.videoHeight;
-  const sx = Math.floor(srcW * 0.06);
-  const sy = Math.floor(srcH * 0.05);
-  const sw = Math.floor(srcW * 0.88);
-  const sh = Math.floor(srcH * 0.25);
+  // 1) Fascia titolo esatta dentro il mirino (top 4.5%..14%, left 6%..82%)
+  const tx = rx + rw * 0.06;
+  const ty = ry + rh * 0.045;
+  const tw = rw * 0.76;
+  const th = rh * 0.095;
 
   const canvas = $("scan-crop-canvas");
-  const scale = Math.min(2, 540 / Math.max(1, sw));
-  canvas.width = Math.max(1, Math.floor(sw * scale));
-  canvas.height = Math.max(1, Math.floor(sh * scale));
+  const targetW = 460;
+  const scale = targetW / Math.max(1, tw);
+  canvas.width = Math.max(1, Math.floor(tw * scale));
+  canvas.height = Math.max(1, Math.floor(th * scale));
 
   const ctx = canvas.getContext("2d");
   ctx.imageSmoothingEnabled = true;
-  ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+  ctx.drawImage(video, tx, ty, tw, th, 0, 0, canvas.width, canvas.height);
 
   const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const d = imgData.data;
   for (let i = 0; i < d.length; i += 4) {
     const lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-    const boosted = Math.max(0, Math.min(255, (lum - 128) * 1.5 + 128));
+    const boosted = Math.max(0, Math.min(255, (lum - 125) * 1.65 + 128));
     d[i] = d[i + 1] = d[i + 2] = boosted;
   }
   ctx.putImageData(imgData, 0, 0);
-  return canvas;
+
+  // 2) Riquadro artwork esatto dentro il mirino (top 14.5%..56%, left 7%..93%)
+  const ax = rx + rw * 0.07;
+  const ay = ry + rh * 0.145;
+  const aw = rw * 0.86;
+  const ah = rh * 0.415;
+  const artDHash = computeDHash64(video, ax, ay, aw, ah);
+
+  return { titleCanvas: canvas, artDHash };
 }
 
-function extractCandidateTitle(rawText) {
-  const lines = String(rawText || "")
-    .split(/\r?\n/)
-    .map((l) => l.replace(/[^A-Za-zÀ-ÖØ-öø-ÿ,'\- /]/g, " ").replace(/\s+/g, " ").trim())
-    .filter((l) => l.length >= 3);
-
-  if (!lines.length) return "";
-  return (lines.find((l) => l.split(" ").length <= 6) || lines[0]).slice(0, 60).trim();
+function cleanOcrTitle(rawText) {
+  return String(rawText || "")
+    .replace(/[^A-Za-zÀ-ÖØ-öø-ÿ,'\- /]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 55);
 }
 
-async function lookupScryfallCard(title) {
-  if (!title || title.length < 3) return null;
-  try {
-    const resp = await fetch(`https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(title)}`);
-    if (!resp.ok) return null;
-    const card = await resp.json();
-    if (!card || !card.name) return null;
-    return card;
-  } catch {
+// ---- INDICE LOCALE SET QUANDO "BLOCCA SET" È ATTIVO ----
+async function ensureSetIndex(setCode) {
+  const code = String(setCode || "").trim().toLowerCase();
+  if (!code) return null;
+  if (setIndexCache.has(code)) {
+    return setIndexCache.get(code);
+  }
+
+  setScanStateBadge(`Indicizzazione set ${code.toUpperCase()}...`);
+  let url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(`e:${code}`)}&unique=prints`;
+  const allCards = [];
+
+  while (url && allCards.length < 450) {
+    const resp = await fetch(url);
+    if (!resp.ok) break;
+    const json = await resp.json();
+    if (Array.isArray(json.data)) {
+      allCards.push(...json.data);
+    }
+    url = json.has_more ? json.next_page : null;
+  }
+
+  if (!allCards.length) {
     return null;
   }
-}
 
-async function loadPrintsForCard(scryfallCard) {
-  const cacheKey = String(scryfallCard.name || "").toLowerCase();
-  if (printsCache.has(cacheKey)) {
-    return printsCache.get(cacheKey);
+  const entries = [];
+  for (let i = 0; i < allCards.length; i += 12) {
+    const batch = allCards.slice(i, i + 12);
+    const batchRes = await Promise.all(
+      batch.map(async (card) => {
+        const dhash = await getDHashForScryfallArt(card);
+        return dhash ? { card, dhash } : null;
+      })
+    );
+    for (const item of batchRes) {
+      if (item) entries.push(item);
+    }
   }
 
+  setIndexCache.set(code, entries);
+  return entries;
+}
+
+async function findCardViaLockedSet(setCode, artDHash) {
+  const entries = await ensureSetIndex(setCode);
+  if (!entries || !entries.length) return null;
+
+  let best = null;
+  let bestDist = 64;
+  for (const entry of entries) {
+    const rejectKey = String(entry.card.id || entry.card.name).toLowerCase();
+    if (rejectedCardKeys.has(rejectKey)) continue;
+
+    const dist = hammingDistance64(artDHash, entry.dhash);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = entry.card;
+    }
+  }
+
+  // Soglia dHash su 64 bit: <= 17 indica forte somiglianza visiva dell'illustrazione
+  if (best && bestDist <= 17) {
+    return { card: best, dist: bestDist };
+  }
+  return null;
+}
+
+// ---- RICERCA SCRYFALL + ORDINAMENTO STAMPE TRAMITE DHASH ----
+async function lookupCardAndPrintsByTitle(title, artDHash) {
+  if (!title || title.length < 3) return null;
+
+  let baseCard = null;
   try {
-    const searchUrl =
-      scryfallCard.prints_search_uri ||
-      `https://api.scryfall.com/cards/search?q=${encodeURIComponent(`!"${scryfallCard.name}"`)}&unique=prints&order=released`;
-    const resp = await fetch(searchUrl);
-    if (!resp.ok) return [scryfallCard];
-    const json = await resp.json();
-    const list = Array.isArray(json.data) && json.data.length ? json.data : [scryfallCard];
-    printsCache.set(cacheKey, list);
-    return list;
+    const resp = await fetch(`https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(title)}`);
+    if (resp.ok) {
+      baseCard = await resp.json();
+    }
   } catch {
-    return [scryfallCard];
+    // fallback autocomplete
   }
-}
 
-async function rankPrintsByCapturedArtwork(prints, capturedArtFp, fallbackCard) {
-  if (!capturedArtFp || !Array.isArray(prints) || !prints.length) {
-    return { orderedPrints: prints || [fallbackCard], bestCard: fallbackCard };
+  if (!baseCard) {
+    try {
+      const acResp = await fetch(`https://api.scryfall.com/cards/autocomplete?q=${encodeURIComponent(title)}`);
+      if (acResp.ok) {
+        const acJson = await acResp.json();
+        const firstMatch = acJson?.data?.[0];
+        if (firstMatch) {
+          const exactResp = await fetch(`https://api.scryfall.com/cards/named?exact=${encodeURIComponent(firstMatch)}`);
+          if (exactResp.ok) {
+            baseCard = await exactResp.json();
+          }
+        }
+      }
+    } catch {
+      // nessuna corrispondenza
+    }
+  }
+
+  if (!baseCard || !baseCard.name) return null;
+
+  const cacheKey = baseCard.name.toLowerCase();
+  let prints = printsCache.get(cacheKey);
+  if (!prints) {
+    try {
+      const printsUrl =
+        baseCard.prints_search_uri ||
+        `https://api.scryfall.com/cards/search?q=${encodeURIComponent(`!"${baseCard.name}"`)}&unique=prints&order=released`;
+      const pResp = await fetch(printsUrl);
+      if (pResp.ok) {
+        const pJson = await pResp.json();
+        prints = Array.isArray(pJson.data) && pJson.data.length ? pJson.data : [baseCard];
+        printsCache.set(cacheKey, prints);
+      } else {
+        prints = [baseCard];
+      }
+    } catch {
+      prints = [baseCard];
+    }
   }
 
   const scored = await Promise.all(
     prints.map(async (p) => {
-      const pFp = await getPrintArtworkFingerprint(p);
-      const dist = pFp ? fingerprintDistance(capturedArtFp, pFp) : 999;
+      const h = await getDHashForScryfallArt(p);
+      const dist = h ? hammingDistance64(artDHash, h) : 64;
       return { print: p, dist };
     })
   );
-
   scored.sort((a, b) => a.dist - b.dist);
-  const orderedPrints = scored.map((s) => s.print);
-  const bestCard = orderedPrints[0] || fallbackCard;
-  return { orderedPrints, bestCard };
+
+  return {
+    orderedPrints: scored.map((s) => s.print),
+    bestDist: scored[0]?.dist ?? 64,
+  };
 }
 
+// ---- PROPOSTA SÌ / NO ----
 function applyEditionToProposal(scryfallCard) {
   if (!pendingProposalCard) return;
   const payload = buildCollectionPayloadFromScryfall(scryfallCard);
@@ -854,50 +967,39 @@ function applyEditionToProposal(scryfallCard) {
   }
 }
 
-async function showCardProposal(scryfallCard, capturedArtFp = null) {
-  const initialPayload = buildCollectionPayloadFromScryfall(scryfallCard);
-  const rejectKey = String(initialPayload.name).toLowerCase();
+function showCardProposal(orderedPrints, sourceLabel = "Carta rilevata") {
+  const bestCard = orderedPrints[0];
+  if (!bestCard) return;
 
-  if (rejectedCardKeys.has(rejectKey)) {
-    setScanStateBadge("Carta scartata, continuo...");
+  const payload = buildCollectionPayloadFromScryfall(bestCard);
+  const rejectKey = String(payload.scryfall_id || payload.name).toLowerCase();
+
+  if (rejectedCardKeys.has(rejectKey) || rejectedCardKeys.has(payload.name.toLowerCase())) {
+    setScanStateBadge("Carta già scartata");
     return;
   }
 
-  pendingProposalCard = { payload: initialPayload, rejectKey };
-  stopScanLoop();
-  setScanStateBadge("Confronto illustrazione...");
-
-  const selectEl = $("proposal-edition-select");
-  selectEl.innerHTML = `<option value="">Analisi illustrazioni edizioni...</option>`;
-  applyEditionToProposal(scryfallCard);
-  $("proposal-modal")?.classList.remove("hidden");
-
-  const rawPrints = await loadPrintsForCard(scryfallCard);
-  if (!pendingProposalCard || pendingProposalCard.rejectKey !== rejectKey) return;
-
-  const { orderedPrints, bestCard } = await rankPrintsByCapturedArtwork(
-    rawPrints,
-    capturedArtFp,
-    scryfallCard
-  );
-  if (!pendingProposalCard || pendingProposalCard.rejectKey !== rejectKey) return;
-
+  pendingProposalCard = { payload, rejectKey, nameKey: payload.name.toLowerCase() };
   proposalPrintOptions = orderedPrints;
-  applyEditionToProposal(bestCard);
+  setReticleState("locked");
   setScanStateBadge("Carta trovata");
 
+  $("proposal-match-source").textContent = sourceLabel;
+  applyEditionToProposal(bestCard);
+
+  const selectEl = $("proposal-edition-select");
   selectEl.innerHTML = orderedPrints
     .map((p, idx) => {
       const code = (p.set || "").toUpperCase();
       const cn = p.collector_number ? `#${p.collector_number}` : "";
       const sname = p.set_name || code;
-      const tag = idx === 0 && capturedArtFp ? " [Match art]" : "";
-      const label = `${sname} [${code}] ${cn}${tag}`.trim();
-      return `<option value="${idx}">${escapeHtml(label)}</option>`;
+      const tag = idx === 0 ? " ★" : "";
+      return `<option value="${idx}">${escapeHtml(`${sname} [${code}] ${cn}${tag}`.trim())}</option>`;
     })
     .join("");
-
   selectEl.value = "0";
+
+  $("proposal-modal")?.classList.remove("hidden");
 }
 
 $("proposal-edition-select")?.addEventListener("change", (e) => {
@@ -910,18 +1012,18 @@ $("proposal-edition-select")?.addEventListener("change", (e) => {
 function hideCardProposalAndResume() {
   pendingProposalCard = null;
   proposalPrintOptions = [];
-  lastFrameSig = null;
-  unchangedFrameCount = 0;
+  stableFramesCount = 0;
+  prevLumaGrid = null;
+  cooldownUntil = Date.now() + 700;
   $("proposal-modal")?.classList.add("hidden");
-  setScanStateBadge("Inquadra una carta...");
-  if (cameraStream) {
-    startScanLoop(180);
-  }
+  setReticleState("idle");
+  setScanStateBadge("Allinea la carta nel riquadro");
 }
 
 $("btn-proposal-no")?.addEventListener("click", () => {
   if (pendingProposalCard) {
     rejectedCardKeys.add(pendingProposalCard.rejectKey);
+    rejectedCardKeys.add(pendingProposalCard.nameKey);
     updateRejectedBadge();
   }
   setStatus($("collection-status"), "Carta scartata: non verrà riproposta.", "");
@@ -934,7 +1036,7 @@ $("btn-proposal-yes")?.addEventListener("click", async () => {
   const isFoil = $("scan-finish-select")?.value === "foil";
 
   try {
-    setStatus($("collection-status"), `Aggiunta ${payload.name} (${payload.set_code})...`);
+    setStatus($("collection-status"), `Salvataggio ${payload.name} [${payload.set_code}]...`);
     await saveCardPayloadToCollection(payload, isFoil);
 
     rejectedCardKeys.clear();
@@ -947,47 +1049,163 @@ $("btn-proposal-yes")?.addEventListener("click", async () => {
   }
 });
 
-async function scanCurrentVideoFrame() {
-  if (typeof Tesseract === "undefined" || isScanningFrame || pendingProposalCard) return;
+// ---- PIPELINE DI SCANSIONE (STABILITÀ -> DHASH SET / WORKER OCR) ----
+async function executeScanPipeline(geom, manualTrigger = false) {
+  if (isProcessingCapture || pendingProposalCard) return;
+  isProcessingCapture = true;
+  setReticleState("scanning");
+  setScanStateBadge("Analisi carta...");
 
-  const frameSig = captureFrameSignature();
-  if (frameSig && lastFrameSig) {
-    const diff = fingerprintDistance(frameSig, lastFrameSig);
-    if (diff < 0.025) {
-      unchangedFrameCount += 1;
-      if (unchangedFrameCount >= 2) {
+  try {
+    const { titleCanvas, artDHash } = captureTitleAndArtFromReticle(geom);
+    const lockedSet = ($("lock-set-input")?.value || "").trim().toLowerCase();
+
+    // 1) Se "Blocca Set" è impostato, riconoscimento visivo istantaneo (zero OCR)
+    if (lockedSet.length >= 3) {
+      const setMatch = await findCardViaLockedSet(lockedSet, artDHash);
+      if (setMatch && !pendingProposalCard) {
+        showCardProposal(
+          [setMatch.card],
+          `Match visivo set ${lockedSet.toUpperCase()} (distanza ${setMatch.dist}/64)`
+        );
         return;
       }
-    } else {
-      unchangedFrameCount = 0;
     }
-  }
-  if (frameSig) {
-    lastFrameSig = frameSig;
-  }
 
-  const capturedArtFp = captureArtworkFingerprintFromVideo();
-  const canvas = captureFrameCanvas();
-  if (!canvas) return;
-
-  isScanningFrame = true;
-  try {
-    const { data } = await Tesseract.recognize(canvas, "eng");
-    const title = extractCandidateTitle(data?.text || "");
-    if (!title || pendingProposalCard) return;
-
-    if (rejectedCardKeys.has(title.toLowerCase())) return;
-
-    const card = await lookupScryfallCard(title);
-    if (card && !pendingProposalCard) {
-      await showCardProposal(card, capturedArtFp);
+    // 2) Altrimenti OCR veloce sul solo titolo + ordinamento edizioni tramite dHash
+    const worker = await ensureOcrWorker();
+    if (!worker) {
+      setStatus($("collection-status"), "Motore OCR non disponibile.", "err");
+      return;
     }
-  } catch {
-    // ignora frame non leggibili durante lo scan continuo
+
+    const { data } = await worker.recognize(titleCanvas);
+    const title = cleanOcrTitle(data?.text || "");
+    if (!title || title.length < 3) {
+      if (manualTrigger) {
+        setStatus($("collection-status"), "Titolo non leggibile: avvicina o illumina meglio la carta.", "err");
+      }
+      return;
+    }
+
+    if (rejectedCardKeys.has(title.toLowerCase())) {
+      return;
+    }
+
+    const res = await lookupCardAndPrintsByTitle(title, artDHash);
+    if (res && res.orderedPrints.length && !pendingProposalCard) {
+      showCardProposal(
+        res.orderedPrints,
+        `Riconosciuta "${title}" (match art ${64 - res.bestDist}/64)`
+      );
+    } else if (manualTrigger) {
+      setStatus($("collection-status"), `Nessuna carta trovata per "${title}".`, "err");
+    }
+  } catch (err) {
+    if (manualTrigger) {
+      setStatus($("collection-status"), `Errore scansione: ${err.message}`, "err");
+    }
   } finally {
-    isScanningFrame = false;
+    isProcessingCapture = false;
+    stableFramesCount = 0;
+    cooldownUntil = Date.now() + 900;
+    if (!pendingProposalCard) {
+      setReticleState("idle");
+      setScanStateBadge("Allinea la carta nel riquadro");
+    }
   }
 }
+
+function startMonitorLoop() {
+  stopMonitorLoop();
+  monitorLoopId = setInterval(() => {
+    if (pendingProposalCard || isProcessingCapture) return;
+    if (Date.now() < cooldownUntil) return;
+
+    const check = evaluateReticleStabilityAndSharpness();
+    if (!check.ready) {
+      stableFramesCount = 0;
+      return;
+    }
+
+    stableFramesCount += 1;
+    if (stableFramesCount >= 2) {
+      executeScanPipeline(check.geom, false);
+    }
+  }, 220);
+}
+
+function stopMonitorLoop() {
+  if (monitorLoopId) {
+    clearInterval(monitorLoopId);
+    monitorLoopId = null;
+  }
+}
+
+function stopCameraStream() {
+  stopMonitorLoop();
+  if (cameraStream) {
+    cameraStream.getTracks().forEach((t) => t.stop());
+    cameraStream = null;
+  }
+  prevLumaGrid = null;
+  stableFramesCount = 0;
+}
+
+async function ensureCameraRunning() {
+  updateRejectedBadge();
+  ensureOcrWorker(); // pre-inizializza in background
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    setStatus($("collection-status"), "Fotocamera non disponibile su questo browser.", "err");
+    return;
+  }
+
+  if (cameraStream) {
+    startMonitorLoop();
+    return;
+  }
+
+  try {
+    setScanStateBadge("Avvio fotocamera...");
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: { ideal: "environment" },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+      },
+      audio: false,
+    });
+
+    const video = $("scan-video");
+    video.srcObject = cameraStream;
+    $("camera-placeholder")?.classList.add("hidden");
+    setScanStateBadge("Allinea la carta nel riquadro");
+    setStatus($("collection-status"), "Inquadra la carta nel mirino: scatta appena è ferma.", "");
+    startMonitorLoop();
+  } catch (err) {
+    setScanStateBadge("Fotocamera bloccata");
+    $("camera-placeholder")?.classList.remove("hidden");
+    setStatus($("collection-status"), `Errore fotocamera: ${err.message}`, "err");
+  }
+}
+
+$("btn-start-camera")?.addEventListener("click", ensureCameraRunning);
+
+$("btn-manual-snap")?.addEventListener("click", () => {
+  const geom = getReticleVideoRect();
+  if (!geom) {
+    setStatus($("collection-status"), "Attiva prima la fotocamera.", "err");
+    return;
+  }
+  executeScanPipeline(geom, true);
+});
+
+$("btn-reset-rejected")?.addEventListener("click", () => {
+  rejectedCardKeys.clear();
+  updateRejectedBadge();
+  setStatus($("collection-status"), "Lista carte scartate azzerata.", "ok");
+});
 
 // Ripristina eventuale sessione già attiva
 (async () => {

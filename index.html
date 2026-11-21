@@ -110,28 +110,42 @@
         </div>
       </section>
 
-      <!-- TAB 3: SCANNER COLLEZIONE (TELECAMERA + EDIZIONE + PROPOSTA SÌ / NO) -->
+      <!-- TAB 3: SCANNER PRO (MIRINO MTG + DHASH + BLOCCO SET) -->
       <section id="tab-collection" class="tab-panel">
         <div class="scanner-full-view">
           <div class="camera-viewport">
             <video id="scan-video" autoplay playsinline muted></video>
+
+            <!-- MIRINO PROPORZIONI CARTA MAGIC -->
+            <div id="card-reticle" class="card-reticle">
+              <div class="reticle-title-zone"><span>TITOLO</span></div>
+              <div class="reticle-art-zone"><span>ARTWORK</span></div>
+            </div>
+
             <div id="camera-placeholder" class="camera-placeholder">
-              <p class="muted">Fotocamera in avvio o non attiva.</p>
+              <p class="muted">Fotocamera non attiva.</p>
               <button id="btn-start-camera" type="button" class="btn primary">Attiva fotocamera</button>
             </div>
+
             <div class="camera-hud">
-              <span id="scan-state-badge" class="scan-badge">In attesa di carta...</span>
+              <span id="scan-state-badge" class="scan-badge">Allinea la carta nel riquadro</span>
               <span id="rejected-count-badge" class="scan-badge secondary">Scartate: 0</span>
             </div>
+
+            <!-- PULSANTE SCATTO MANUALE RAPIDO -->
+            <button id="btn-manual-snap" type="button" class="shutter-btn" title="Scansiona subito">
+              <span class="shutter-inner"></span>
+            </button>
           </div>
 
           <div class="camera-footer-bar">
-            <div class="row-2 compact-row">
+            <div class="scanner-controls-grid">
+              <input id="lock-set-input" type="text" maxlength="6" placeholder="Blocca Set (es. MH3)" />
               <select id="scan-finish-select">
                 <option value="normal">Normale</option>
                 <option value="foil">Foil</option>
               </select>
-              <button id="btn-reset-rejected" type="button" class="btn small">Reset scartate</button>
+              <button id="btn-reset-rejected" type="button" class="btn small">Reset</button>
             </div>
             <p id="collection-status" class="status"></p>
           </div>
@@ -139,7 +153,7 @@
           <!-- CARD PROPOSTA QUANDO VIENE RICONOSCIUTA UNA CARTA -->
           <div id="proposal-modal" class="proposal-overlay hidden">
             <div class="proposal-card">
-              <p class="muted">Carta rilevata. Aggiungere alla collezione?</p>
+              <p id="proposal-match-source" class="muted">Carta rilevata</p>
               <img id="proposal-img" src="" alt="Anteprima carta" class="proposal-img hidden" />
               <h2 id="proposal-name">Nome carta</h2>
               <p id="proposal-meta" class="muted"></p>

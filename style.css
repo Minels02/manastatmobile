@@ -69,18 +69,13 @@ input, select {
   border: 1px solid var(--border);
   background: #121620;
   color: var(--text);
-  font-size: 1rem;
+  font-size: 0.95rem;
 }
 
 .row-2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
-}
-
-.compact-row {
-  margin-top: 0;
-  align-items: center;
 }
 
 .btn {
@@ -107,8 +102,8 @@ input, select {
 
 .btn.small {
   margin-top: 0;
-  padding: 9px 12px;
-  font-size: 0.85rem;
+  padding: 9px 10px;
+  font-size: 0.82rem;
 }
 
 .btn.back-btn {
@@ -138,7 +133,7 @@ input, select {
 
 .status {
   min-height: 18px;
-  font-size: 0.86rem;
+  font-size: 0.84rem;
   margin-top: 6px;
   margin-bottom: 0;
   color: var(--muted);
@@ -313,12 +308,12 @@ input, select {
   width: auto;
 }
 
-/* ---- SCHEDA SCANNER TELECAMERA + PROPOSTA SÌ/NO ---- */
+/* ---- SCHEDA SCANNER PRO CON MIRINO MTG ---- */
 #tab-collection.active {
   display: flex;
   flex-direction: column;
   height: calc(100vh - 118px);
-  min-height: 460px;
+  min-height: 480px;
 }
 
 .scanner-full-view {
@@ -349,10 +344,73 @@ input, select {
   object-fit: cover;
 }
 
+/* Mirino con proporzione carta Magic 63x88 */
+.card-reticle {
+  position: absolute;
+  width: min(64%, 250px);
+  aspect-ratio: 63 / 88;
+  border: 2.5px solid rgba(255, 255, 255, 0.72);
+  border-radius: 14px;
+  box-shadow: 0 0 0 9999px rgba(8, 11, 17, 0.45);
+  pointer-events: none;
+  z-index: 3;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.card-reticle.locked {
+  border-color: #22c55e;
+  transform: scale(1.015);
+}
+
+.card-reticle.scanning {
+  border-color: #facc15;
+}
+
+.reticle-title-zone {
+  position: absolute;
+  top: 4.5%;
+  left: 6%;
+  width: 88%;
+  height: 9.5%;
+  border: 1px dashed rgba(96, 165, 250, 0.8);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 4px;
+}
+
+.reticle-title-zone span,
+.reticle-art-zone span {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  color: rgba(255, 255, 255, 0.75);
+  background: rgba(12, 16, 24, 0.75);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.reticle-art-zone {
+  position: absolute;
+  top: 14.5%;
+  left: 7%;
+  width: 86%;
+  height: 41.5%;
+  border: 1px dashed rgba(250, 204, 21, 0.65);
+  border-radius: 4px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  padding: 3px;
+}
+
 .camera-placeholder {
+  position: absolute;
   text-align: center;
   padding: 20px;
   max-width: 280px;
+  z-index: 5;
 }
 
 .camera-hud {
@@ -368,10 +426,10 @@ input, select {
 }
 
 .scan-badge {
-  background: rgba(15, 19, 28, 0.85);
+  background: rgba(15, 19, 28, 0.88);
   border: 1px solid rgba(148, 163, 184, 0.35);
   color: #f8fafc;
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 600;
   padding: 5px 10px;
   border-radius: 999px;
@@ -381,17 +439,57 @@ input, select {
   color: #fca5a5;
 }
 
+.shutter-btn {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  border: 3px solid #ffffff;
+  background: rgba(18, 22, 32, 0.55);
+  padding: 4px;
+  cursor: pointer;
+  z-index: 6;
+}
+
+.shutter-btn:active {
+  transform: translateX(-50%) scale(0.94);
+}
+
+.shutter-inner {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: #ffffff;
+}
+
 .camera-footer-bar {
   background: #171c27;
   border-top: 1px solid var(--border);
-  padding: 10px 12px;
+  padding: 8px 10px;
   z-index: 5;
+}
+
+.scanner-controls-grid {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.scanner-controls-grid input,
+.scanner-controls-grid select {
+  padding: 8px 10px;
+  font-size: 0.86rem;
 }
 
 .proposal-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(9, 12, 18, 0.86);
+  background: rgba(9, 12, 18, 0.88);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -411,10 +509,10 @@ input, select {
 
 .proposal-img {
   display: block;
-  width: 170px;
-  max-height: 238px;
+  width: 165px;
+  max-height: 230px;
   object-fit: contain;
-  margin: 8px auto 12px;
+  margin: 8px auto 10px;
   border-radius: 8px;
 }
 
