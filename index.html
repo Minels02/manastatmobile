@@ -110,7 +110,7 @@
         </div>
       </section>
 
-      <!-- TAB 3: COLLEZIONE (RICERCA SCRYFALL + SCANNER BASSO A SINISTRA) -->
+      <!-- TAB 3: COLLEZIONE (RICERCA SCRYFALL + AUTO-SCANNER CARTA) -->
       <section id="tab-collection" class="tab-panel">
         <div class="card">
           <h2>Aggiungi carta alla collezione</h2>
@@ -121,41 +121,42 @@
         </div>
 
         <div class="card">
-          <h3>Scanner zona in basso a sinistra (Set / Numero)</h3>
-          <p class="muted">Inquadra o carica una foto della carta posizionando il riquadro giallo in basso a sinistra su numero e codice set.</p>
+          <h3>Auto-Scanner carta</h3>
+          <p class="muted">Inquadra la carta con il riquadro giallo (titolo/carta intera): quando la riconosce cerca automaticamente su Scryfall.</p>
 
           <div class="row-2">
-            <button id="btn-open-camera" type="button" class="btn">📷 Apri fotocamera</button>
+            <button id="btn-open-camera" type="button" class="btn">📷 Avvia auto-scan</button>
+            <button id="btn-toggle-autoscan" type="button" class="btn">⏸️ Pausa auto</button>
+          </div>
+
+          <div class="row-2">
             <label class="btn file-btn" for="scan-file-input">🖼️ Carica foto</label>
             <input id="scan-file-input" type="file" accept="image/*" capture="environment" class="hidden" />
+            <button id="btn-run-ocr" type="button" class="btn">🔍 Scansiona ora</button>
           </div>
 
           <div id="scanner-stage" class="scanner-stage hidden">
             <video id="scan-video" autoplay playsinline muted class="hidden"></video>
             <img id="scan-preview-img" alt="Anteprima carta" class="hidden" />
-            <div id="scan-roi-box" class="scan-roi-box" title="Zona scansione basso a sinistra">
-              <span>SET / #</span>
+            <div id="scan-roi-box" class="scan-roi-box" title="Zona scansione carta">
+              <span>AUTO SCAN</span>
             </div>
           </div>
 
           <div id="roi-controls" class="roi-controls hidden">
-            <label>Posizione orizzontale riquadro (sinistra → destra): <span id="roi-x-val">6%</span></label>
-            <input id="roi-x" type="range" min="0" max="60" value="6" />
+            <label>Sinistra → destra: <span id="roi-x-val">6%</span></label>
+            <input id="roi-x" type="range" min="0" max="50" value="6" />
 
-            <label>Posizione verticale riquadro (dall'alto): <span id="roi-y-val">78%</span></label>
-            <input id="roi-y" type="range" min="50" max="88" value="78" />
+            <label>Dall'alto: <span id="roi-y-val">6%</span></label>
+            <input id="roi-y" type="range" min="0" max="75" value="6" />
 
-            <label>Larghezza riquadro: <span id="roi-w-val">44%</span></label>
-            <input id="roi-w" type="range" min="25" max="75" value="44" />
+            <label>Larghezza: <span id="roi-w-val">88%</span></label>
+            <input id="roi-w" type="range" min="35" max="96" value="88" />
 
-            <label>Altezza riquadro: <span id="roi-h-val">14%</span></label>
-            <input id="roi-h" type="range" min="8" max="26" value="14" />
+            <label>Altezza: <span id="roi-h-val">22%</span></label>
+            <input id="roi-h" type="range" min="10" max="85" value="22" />
           </div>
 
-          <label>Filtro nome carta opzionale (aiuta se ci sono più stampe con lo stesso numero)</label>
-          <input id="scan-name-hint" type="text" placeholder="Es. Sol Ring (opzionale)" />
-
-          <button id="btn-run-ocr" type="button" class="btn primary">🔍 Leggi zona in basso a sinistra</button>
           <p id="scan-ocr-readout" class="muted"></p>
           <canvas id="scan-crop-canvas" class="hidden"></canvas>
         </div>
