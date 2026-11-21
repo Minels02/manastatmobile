@@ -604,7 +604,7 @@ window.addCardToCollection = async function (encodedPayload, isFoil) {
   setStatus($("collection-status"), `${card.name} aggiunta alla collezione!`, "ok");
 };
 
-// ---- SCANNER ZONA IN BASSO A SINISTRA (OCR + SCRYFALL) ----
+// ---- SCANNER ZONA IN BASSO A SINISTRA (OCR + SCRYFALL MIGLIORATO) ----
 function syncRoiBox() {
   const x = parseInt($("roi-x")?.value || "6", 10);
   const y = parseInt($("roi-y")?.value || "78", 10);
@@ -646,7 +646,11 @@ $("btn-open-camera")?.addEventListener("click", async () => {
   try {
     stopCameraStream();
     cameraStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: "environment" } },
+      video: {
+        facingMode: { ideal: "environment" },
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+      },
       audio: false,
     });
     const video = $("scan-video");
@@ -657,7 +661,7 @@ $("btn-open-camera")?.addEventListener("click", async () => {
     video.classList.remove("hidden");
     $("scanner-stage").classList.remove("hidden");
     $("roi-controls").classList.remove("hidden");
-    setStatus($("collection-status"), "Fotocamera attiva: allinea il riquadro giallo in basso a sinistra.", "");
+    setStatus($("collection-status"), "Fotocamera attiva: avvicina il telefono al basso a sinistra e tieni fermo.", "");
   } catch (err) {
     setStatus($("collection-status"), `Impossibile aprire la fotocamera: ${err.message}`, "err");
   }
@@ -714,19 +718,22 @@ function captureCroppedCanvas() {
   const sh = Math.max(10, Math.min(srcH - sy, Math.floor(srcH * rh)));
 
   const canvas = $("scan-crop-canvas");
-  const scale = Math.max(2, 900 / sw);
+  const scale = Math.max(3, 1200 / sw);
   canvas.width = Math.floor(sw * scale);
   canvas.height = Math.floor(sh * scale);
 
   const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
   ctx.drawImage(sourceEl, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
 
+  // Contrasto marcato per separare testo chiaro/scuro su caratteri piccoli
   const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const d = imgData.data;
   for (let i = 0; i < d.length; i += 4) {
     const lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-    const boosted = Math.max(0, Math.min(255, (lum - 128) * 1.45 + 128));
-    d[i] = d[i + 1] = d[i + 2] = boosted;
+    const contrasted = lum > 135 ? 255 : lum < 95 ? 0 : Math.max(0, Math.min(255, (lum - 115) * 2.2 + 128));
+    d[i] = d[i + 1] = d[i + 2] = contrasted;
   }
   ctx.putImageData(imgData, 0, 0);
   return canvas;
@@ -734,14 +741,54 @@ function captureCroppedCanvas() {
 
 function parseSetAndNumberFromOcr(rawText) {
   const clean = String(rawText || "").replace(/\s+/g, " ").trim();
-  const numMatch = clean.match(/\b0*([1-9]\d{0,3})\b/);
+
+  // Normalizza sostituzioni tipiche OCR solo quando si cerca il numero
+  const numCandidate = clean
+    .replace(/[Oo]/g, "0")
+    .replace(/[Il|]/g, "1");
+  const numMatch = numCandidate.match(/\b0*([1-9]\d{0,3})\b/);
   const collectorNumber = numMatch ? numMatch[1] : "";
 
   const tokens = clean.toUpperCase().match(/\b[A-Z0-9]{3,4}\b/g) || [];
-  const ignoredCodes = new Set(["EN", "IT", "FR", "DE", "ES", "PT", "JA", "KO", "RU", "ZHT", "ZHS", "FOIL", "NOT"]);
+  const ignoredCodes = new Set(["EN", "IT", "FR", "DE", "ES", "PT", "JA", "KO", "RU", "ZHT", "ZHS", "FOIL", "NOT", "THE", "AND"]);
   const setCode = tokens.find((t) => !ignoredCodes.has(t) && !/^\d+$/.test(t)) || "";
 
   return { clean, setCode, collectorNumber };
+}
+
+async function queryScryfallWithFallback(parsed, nameHint) {
+  const queries = [];
+
+  if (nameHint && parsed.setCode && parsed.collectorNumber) {
+    queries.push(`!"${nameHint}" set:${parsed.setCode.toLowerCase()} cn:${parsed.collectorNumber}`);
+  }
+  if (parsed.setCode && parsed.collectorNumber) {
+    queries.push(`set:${parsed.setCode.toLowerCase()} cn:${parsed.collectorNumber}`);
+  }
+  if (nameHint && parsed.collectorNumber) {
+    queries.push(`!"${nameHint}" cn:${parsed.collectorNumber}`);
+  }
+  if (nameHint && parsed.setCode) {
+    queries.push(`!"${nameHint}" set:${parsed.setCode.toLowerCase()}`);
+  }
+  if (parsed.collectorNumber) {
+    queries.push(`cn:${parsed.collectorNumber}`);
+  }
+  if (nameHint) {
+    queries.push(`!"${nameHint}"`);
+  }
+
+  for (const q of queries) {
+    const resp = await fetch(`https://api.scryfall.com/cards/search?q=${encodeURIComponent(q)}&unique=prints`);
+    if (!resp.ok) continue;
+    const json = await resp.json();
+    const cards = (json.data || []).slice(0, 10);
+    if (cards.length) {
+      return { query: q, cards };
+    }
+  }
+
+  return { query: queries[0] || "", cards: [] };
 }
 
 $("btn-run-ocr")?.addEventListener("click", async () => {
@@ -765,43 +812,24 @@ $("btn-run-ocr")?.addEventListener("click", async () => {
     const nameHint = ($("scan-name-hint")?.value || "").trim();
 
     $("scan-ocr-readout").textContent =
-      `Testo letto: "${parsed.clean || "—"}"` +
+      `Letto: "${parsed.clean || "—"}"` +
       (parsed.setCode ? ` · Set: ${parsed.setCode}` : "") +
       (parsed.collectorNumber ? ` · #${parsed.collectorNumber}` : "");
 
-    const parts = [];
-    if (nameHint) parts.push(`!"${nameHint}"`);
-    if (parsed.setCode) parts.push(`set:${parsed.setCode.toLowerCase()}`);
-    if (parsed.collectorNumber) parts.push(`cn:${parsed.collectorNumber}`);
-
-    if (!parts.length) {
-      setStatus($("collection-status"), "Non ho letto un numero o codice set chiaro: regola il riquadro o inserisci il nome.", "err");
-      return;
-    }
-
-    const query = parts.join(" ");
-    setStatus($("collection-status"), `Ricerca su Scryfall (${query})...`);
-    const resp = await fetch(`https://api.scryfall.com/cards/search?q=${encodeURIComponent(query)}&unique=prints`);
-    const json = await resp.json();
-    const cards = (json.data || []).slice(0, 10);
+    const { query, cards } = await queryScryfallWithFallback(parsed, nameHint);
 
     if (!cards.length) {
-      setStatus($("collection-status"), `Nessuna corrispondenza esatta per "${query}". Prova a spostare il riquadro o a indicare il nome.`, "err");
+      setStatus(
+        $("collection-status"),
+        "Lettura incerta: usa 'Carica foto' con luce laterale (senza riflessi foil) o cerca per nome.",
+        "err"
+      );
       return;
     }
 
-    setStatus($("collection-status"), `Trovate ${cards.length} stampe: scegli finitura e aggiungi.`, "ok");
+    setStatus($("collection-status"), `Trovate ${cards.length} stampe (${query}). Conferma finitura e aggiungi.`, "ok");
     renderCardResultsList(cards);
   } catch (err) {
     setStatus($("collection-status"), `Errore OCR/ricerca: ${err.message}`, "err");
   }
 });
-
-// Ripristina eventuale sessione già attiva
-(async () => {
-  const { data } = await sb.auth.getSession();
-  if (data?.session?.user) {
-    currentUser = data.session.user;
-    onAuthenticated();
-  }
-})();
