@@ -110,7 +110,7 @@
         </div>
       </section>
 
-      <!-- TAB 3: SCANNER COLLEZIONE (TELECAMERA + PROPOSTA SÌ / NO) -->
+      <!-- TAB 3: SCANNER COLLEZIONE (TELECAMERA + EDIZIONE + PROPOSTA SÌ / NO) -->
       <section id="tab-collection" class="tab-panel">
         <div class="scanner-full-view">
           <div class="camera-viewport">
@@ -143,6 +143,11 @@
               <img id="proposal-img" src="" alt="Anteprima carta" class="proposal-img hidden" />
               <h2 id="proposal-name">Nome carta</h2>
               <p id="proposal-meta" class="muted"></p>
+
+              <label for="proposal-edition-select">Edizione</label>
+              <select id="proposal-edition-select">
+                <option value="">Caricamento edizioni...</option>
+              </select>
 
               <div class="proposal-actions">
                 <button id="btn-proposal-no" type="button" class="btn danger-btn">No</button>

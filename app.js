@@ -14,12 +14,15 @@ let selectedGroupId = null;
 let groupMembers = [];
 let groupDecks = [];
 const artworkCache = new Map();
+const printsCache = new Map();
 
 // Stato dello scanner continuo + proposta Sì/No + lista scartate
 let cameraStream = null;
 let scanLoopTimer = null;
+let quickResumeTimer = null;
 let isScanningFrame = false;
 let pendingProposalCard = null;
+let proposalPrintOptions = [];
 const rejectedCardKeys = new Set();
 
 const PREFERRED_FORMATS = [
@@ -573,11 +576,15 @@ function buildCollectionPayloadFromScryfall(c) {
   };
 }
 
-// ---- SCANNER TELECAMERA + PROPOSTA SÌ / NO ----
+// ---- SCANNER TELECAMERA + EDIZIONE + PROPOSTA SÌ / NO ----
 function stopScanLoop() {
   if (scanLoopTimer) {
     clearInterval(scanLoopTimer);
     scanLoopTimer = null;
+  }
+  if (quickResumeTimer) {
+    clearTimeout(quickResumeTimer);
+    quickResumeTimer = null;
   }
 }
 
@@ -589,15 +596,27 @@ function stopCameraStream() {
   }
 }
 
-function startScanLoop() {
-  stopScanLoop();
-  scanLoopTimer = setInterval(() => {
-    if (pendingProposalCard) return;
-    if (isScanningFrame) return;
+function startScanLoop(delayMs = 250) {
+  if (scanLoopTimer) {
+    clearInterval(scanLoopTimer);
+    scanLoopTimer = null;
+  }
+  if (quickResumeTimer) {
+    clearTimeout(quickResumeTimer);
+    quickResumeTimer = null;
+  }
+
+  const runTick = () => {
+    if (pendingProposalCard || isScanningFrame) return;
     const video = $("scan-video");
     if (!video || video.readyState < 2) return;
     scanCurrentVideoFrame();
-  }, 1700);
+  };
+
+  quickResumeTimer = setTimeout(() => {
+    runTick();
+    scanLoopTimer = setInterval(runTick, 950);
+  }, delayMs);
 }
 
 async function ensureCameraRunning() {
@@ -608,7 +627,7 @@ async function ensureCameraRunning() {
   }
 
   if (cameraStream) {
-    startScanLoop();
+    startScanLoop(150);
     return;
   }
 
@@ -617,8 +636,8 @@ async function ensureCameraRunning() {
     cameraStream = await navigator.mediaDevices.getUserMedia({
       video: {
         facingMode: { ideal: "environment" },
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
       },
       audio: false,
     });
@@ -627,8 +646,8 @@ async function ensureCameraRunning() {
     video.srcObject = cameraStream;
     $("camera-placeholder")?.classList.add("hidden");
     setScanStateBadge("Inquadra una carta...");
-    setStatus($("collection-status"), "Scansione automatica attiva.", "");
-    startScanLoop();
+    setStatus($("collection-status"), "Scansione rapida attiva.", "");
+    startScanLoop(300);
   } catch (err) {
     setScanStateBadge("Fotocamera bloccata");
     $("camera-placeholder")?.classList.remove("hidden");
@@ -650,20 +669,18 @@ function captureFrameCanvas() {
 
   const srcW = video.videoWidth;
   const srcH = video.videoHeight;
-  // Ritaglia l'area centrale/superiore dove compare il nome della carta
   const sx = Math.floor(srcW * 0.06);
   const sy = Math.floor(srcH * 0.05);
   const sw = Math.floor(srcW * 0.88);
   const sh = Math.floor(srcH * 0.28);
 
   const canvas = $("scan-crop-canvas");
-  const scale = Math.max(2, 1000 / Math.max(1, sw));
-  canvas.width = Math.floor(sw * scale);
-  canvas.height = Math.floor(sh * scale);
+  const scale = Math.min(2, 720 / Math.max(1, sw));
+  canvas.width = Math.max(1, Math.floor(sw * scale));
+  canvas.height = Math.max(1, Math.floor(sh * scale));
 
   const ctx = canvas.getContext("2d");
   ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = "high";
   ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
 
   const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -700,18 +717,31 @@ async function lookupScryfallCard(title) {
   }
 }
 
-function showCardProposal(scryfallCard) {
-  const payload = buildCollectionPayloadFromScryfall(scryfallCard);
-  const rejectKey = String(payload.scryfall_id || payload.name).toLowerCase();
-
-  if (rejectedCardKeys.has(rejectKey)) {
-    setScanStateBadge("Carta già scartata, continuo...");
-    return;
+async function loadPrintsForCard(scryfallCard) {
+  const cacheKey = String(scryfallCard.name || "").toLowerCase();
+  if (printsCache.has(cacheKey)) {
+    return printsCache.get(cacheKey);
   }
 
-  pendingProposalCard = { payload, rejectKey };
-  stopScanLoop();
-  setScanStateBadge("Carta trovata");
+  try {
+    const searchUrl =
+      scryfallCard.prints_search_uri ||
+      `https://api.scryfall.com/cards/search?q=${encodeURIComponent(`!"${scryfallCard.name}"`)}&unique=prints&order=released`;
+    const resp = await fetch(searchUrl);
+    if (!resp.ok) return [scryfallCard];
+    const json = await resp.json();
+    const list = Array.isArray(json.data) && json.data.length ? json.data : [scryfallCard];
+    printsCache.set(cacheKey, list);
+    return list;
+  } catch {
+    return [scryfallCard];
+  }
+}
+
+function applyEditionToProposal(scryfallCard) {
+  if (!pendingProposalCard) return;
+  const payload = buildCollectionPayloadFromScryfall(scryfallCard);
+  pendingProposalCard.payload = payload;
 
   $("proposal-name").textContent = payload.name;
   $("proposal-meta").textContent =
@@ -724,16 +754,58 @@ function showCardProposal(scryfallCard) {
   } else {
     imgEl.classList.add("hidden");
   }
-
-  $("proposal-modal")?.classList.remove("hidden");
 }
+
+async function showCardProposal(scryfallCard) {
+  const initialPayload = buildCollectionPayloadFromScryfall(scryfallCard);
+  const rejectKey = String(initialPayload.name).toLowerCase();
+
+  if (rejectedCardKeys.has(rejectKey)) {
+    setScanStateBadge("Carta scartata, continuo...");
+    return;
+  }
+
+  pendingProposalCard = { payload: initialPayload, rejectKey };
+  stopScanLoop();
+  setScanStateBadge("Carta trovata");
+
+  const selectEl = $("proposal-edition-select");
+  selectEl.innerHTML = `<option value="">Caricamento edizioni...</option>`;
+  applyEditionToProposal(scryfallCard);
+  $("proposal-modal")?.classList.remove("hidden");
+
+  const prints = await loadPrintsForCard(scryfallCard);
+  if (!pendingProposalCard || pendingProposalCard.rejectKey !== rejectKey) return;
+
+  proposalPrintOptions = prints;
+  selectEl.innerHTML = prints
+    .map((p, idx) => {
+      const code = (p.set || "").toUpperCase();
+      const cn = p.collector_number ? `#${p.collector_number}` : "";
+      const sname = p.set_name || code;
+      const label = `${sname} [${code}] ${cn}`.trim();
+      return `<option value="${idx}">${escapeHtml(label)}</option>`;
+    })
+    .join("");
+
+  const matchedIdx = prints.findIndex((p) => p.id === scryfallCard.id);
+  selectEl.value = String(matchedIdx >= 0 ? matchedIdx : 0);
+}
+
+$("proposal-edition-select")?.addEventListener("change", (e) => {
+  const idx = parseInt(e.target.value, 10);
+  if (!Number.isNaN(idx) && proposalPrintOptions[idx]) {
+    applyEditionToProposal(proposalPrintOptions[idx]);
+  }
+});
 
 function hideCardProposalAndResume() {
   pendingProposalCard = null;
+  proposalPrintOptions = [];
   $("proposal-modal")?.classList.add("hidden");
   setScanStateBadge("Inquadra una carta...");
   if (cameraStream) {
-    startScanLoop();
+    startScanLoop(200);
   }
 }
 
@@ -752,13 +824,12 @@ $("btn-proposal-yes")?.addEventListener("click", async () => {
   const isFoil = $("scan-finish-select")?.value === "foil";
 
   try {
-    setStatus($("collection-status"), `Aggiunta ${payload.name} alla collezione...`);
+    setStatus($("collection-status"), `Aggiunta ${payload.name} (${payload.set_code})...`);
     await saveCardPayloadToCollection(payload, isFoil);
 
-    // Confermando "Sì" si azzera la lista delle carte scartate
     rejectedCardKeys.clear();
     updateRejectedBadge();
-    setStatus($("collection-status"), `${payload.name} aggiunta alla collezione! Scartate azzerate.`, "ok");
+    setStatus($("collection-status"), `${payload.name} [${payload.set_code}] aggiunta! Scartate azzerate.`, "ok");
   } catch (err) {
     setStatus($("collection-status"), `Errore salvataggio: ${err.message}`, "err");
   } finally {
@@ -777,9 +848,11 @@ async function scanCurrentVideoFrame() {
     const title = extractCandidateTitle(data?.text || "");
     if (!title || pendingProposalCard) return;
 
+    if (rejectedCardKeys.has(title.toLowerCase())) return;
+
     const card = await lookupScryfallCard(title);
     if (card && !pendingProposalCard) {
-      showCardProposal(card);
+      await showCardProposal(card);
     }
   } catch {
     // ignora frame non leggibili durante lo scan continuo
