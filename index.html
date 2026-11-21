@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#12151c" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>ManaStat Companion</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+</head>
+<body>
+  <div id="app">
+    <!-- LOGIN -->
+    <section id="login-view" class="card">
+      <h1>ManaStat</h1>
+      <p class="muted">Accedi con lo stesso account dell'app desktop.</p>
+      <label>Email</label>
+      <input id="email" type="email" placeholder="tu@esempio.com" autocomplete="email" />
+      <label>Password</label>
+      <input id="password" type="password" placeholder="••••••••" autocomplete="current-password" />
+      <button id="btn-login" class="btn primary">Accedi</button>
+      <p id="login-status" class="status"></p>
+    </section>
+
+    <!-- APP PRINCIPALE -->
+    <main id="main-view" class="hidden">
+      <header class="topbar">
+        <div>
+          <strong>ManaStat</strong>
+          <span id="user-badge" class="badge"></span>
+        </div>
+        <button id="btn-logout" class="btn small">Esci</button>
+      </header>
+
+      <!-- TAB 1: MAZZI -->
+      <section id="tab-decks" class="tab-panel active">
+        <div id="decks-list-view" class="card">
+          <h2>I tuoi mazzi</h2>
+          <p class="muted">Tocca un mazzo per aprire la sua scheda e segnare una partita.</p>
+          <div id="decks-list-container" class="deck-cards-list"></div>
+          <p id="deck-list-status" class="status"></p>
+        </div>
+
+        <div id="deck-detail-view" class="hidden">
+          <div class="detail-header">
+            <button id="btn-back-to-decks" class="btn back-btn">← Tutti i mazzi</button>
+            <span class="muted">Scheda mazzo</span>
+          </div>
+
+          <div id="deck-detail-hero" class="detail-hero">
+            <div class="detail-hero-inner">
+              <h2 id="deck-detail-title">Mazzo</h2>
+              <span id="deck-detail-format" class="badge">Formato</span>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Registra partita</h3>
+            <div class="row-2">
+              <div>
+                <label>Partite giocate</label>
+                <input id="deck-matches" type="number" min="1" value="1" />
+              </div>
+              <div>
+                <label>Vittorie</label>
+                <input id="deck-wins" type="number" min="0" value="0" />
+              </div>
+            </div>
+
+            <label>Data</label>
+            <input id="deck-date" type="date" />
+
+            <button id="btn-save-deck-match" class="btn primary">Salva partita su mazzo</button>
+            <p id="deck-status" class="status"></p>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 2: GRUPPI -->
+      <section id="tab-groups" class="tab-panel">
+        <div id="groups-list-view" class="card">
+          <h2>I tuoi gruppi</h2>
+          <p class="muted">Seleziona un gruppo per inserire una partita.</p>
+          <div id="groups-list-container" class="group-list"></div>
+          <p id="group-list-status" class="status"></p>
+        </div>
+
+        <div id="group-detail-view" class="hidden">
+          <div class="detail-header">
+            <button id="btn-back-to-groups" class="btn back-btn">← Tutti i gruppi</button>
+            <span class="muted">Scheda gruppo</span>
+          </div>
+
+          <div class="card">
+            <h2 id="group-detail-title">Gruppo</h2>
+            <label>Partecipanti & Mazzi</label>
+            <div id="group-players-container"></div>
+
+            <label>Note (opzionali)</label>
+            <input id="group-notes" type="text" placeholder="Es. pod da 4, partita veloce..." />
+
+            <button id="btn-save-group-match" class="btn primary">Salva partita gruppo</button>
+            <p id="group-status" class="status"></p>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 3: COLLEZIONE (RICERCA SCRYFALL + SCANNER BASSO A SINISTRA) -->
+      <section id="tab-collection" class="tab-panel">
+        <div class="card">
+          <h2>Aggiungi carta alla collezione</h2>
+          <div class="row-search">
+            <input id="card-search-input" type="text" placeholder="Nome carta (es. Sol Ring)..." />
+            <button id="btn-search-card" class="btn">Cerca</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Scanner zona in basso a sinistra (Set / Numero)</h3>
+          <p class="muted">Inquadra o carica una foto della carta posizionando il riquadro giallo in basso a sinistra su numero e codice set.</p>
+
+          <div class="row-2">
+            <button id="btn-open-camera" type="button" class="btn">📷 Apri fotocamera</button>
+            <label class="btn file-btn" for="scan-file-input">🖼️ Carica foto</label>
+            <input id="scan-file-input" type="file" accept="image/*" capture="environment" class="hidden" />
+          </div>
+
+          <div id="scanner-stage" class="scanner-stage hidden">
+            <video id="scan-video" autoplay playsinline muted class="hidden"></video>
+            <img id="scan-preview-img" alt="Anteprima carta" class="hidden" />
+            <div id="scan-roi-box" class="scan-roi-box" title="Zona scansione basso a sinistra">
+              <span>SET / #</span>
+            </div>
+          </div>
+
+          <div id="roi-controls" class="roi-controls hidden">
+            <label>Posizione orizzontale riquadro (sinistra → destra): <span id="roi-x-val">6%</span></label>
+            <input id="roi-x" type="range" min="0" max="60" value="6" />
+
+            <label>Posizione verticale riquadro (dall'alto): <span id="roi-y-val">78%</span></label>
+            <input id="roi-y" type="range" min="50" max="88" value="78" />
+
+            <label>Larghezza riquadro: <span id="roi-w-val">44%</span></label>
+            <input id="roi-w" type="range" min="25" max="75" value="44" />
+
+            <label>Altezza riquadro: <span id="roi-h-val">14%</span></label>
+            <input id="roi-h" type="range" min="8" max="26" value="14" />
+          </div>
+
+          <label>Filtro nome carta opzionale (aiuta se ci sono più stampe con lo stesso numero)</label>
+          <input id="scan-name-hint" type="text" placeholder="Es. Sol Ring (opzionale)" />
+
+          <button id="btn-run-ocr" type="button" class="btn primary">🔍 Leggi zona in basso a sinistra</button>
+          <p id="scan-ocr-readout" class="muted"></p>
+          <canvas id="scan-crop-canvas" class="hidden"></canvas>
+        </div>
+
+        <div class="card">
+          <h3>Risultati</h3>
+          <div id="card-results" class="results-list"></div>
+          <p id="collection-status" class="status"></p>
+        </div>
+      </section>
+
+      <!-- NAVIGAZIONE IN BASSO -->
+      <nav class="bottom-nav">
+        <button class="nav-btn active" data-tab="tab-decks">Mazzi</button>
+        <button class="nav-btn" data-tab="tab-groups">Gruppi</button>
+        <button class="nav-btn" data-tab="tab-collection">Collezione</button>
+      </nav>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

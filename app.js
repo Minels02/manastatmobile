@@ -1,0 +1,807 @@
+// Sostituisci con i tuoi valori reali di Supabase (gli stessi dell'app desktop)
+const SUPABASE_URL = "https://ihcsodtizmkwhzkzmbxk.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_jXML1u1eUjEtCTqjLwukgQ_YspJOh1S";
+
+
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+const $ = (id) => document.getElementById(id);
+let currentUser = null;
+let myDecks = [];
+let selectedDeckId = null;
+let myGroups = [];
+let selectedGroupId = null;
+let groupMembers = [];
+let groupDecks = [];
+const artworkCache = new Map();
+
+let cameraStream = null;
+let loadedScanImage = null;
+
+const PREFERRED_FORMATS = [
+  "Commander",
+  "Standard",
+  "Modern",
+  "Pioneer",
+  "Pauper",
+  "Legacy",
+  "Vintage",
+  "Brawl",
+  "Draft / Sealed",
+  "Casual",
+];
+
+function setStatus(el, msg, type = "") {
+  el.textContent = msg;
+  el.className = `status ${type}`.trim();
+}
+
+function escapeHtml(str) {
+  return String(str ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+$("deck-date").value = new Date().toISOString().slice(0, 10);
+
+// Navigazione tab in basso
+document.querySelectorAll(".nav-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".nav-btn").forEach((b) => b.classList.remove("active"));
+    document.querySelectorAll(".tab-panel").forEach((p) => p.classList.remove("active"));
+    btn.classList.add("active");
+    $(btn.dataset.tab).classList.add("active");
+  });
+});
+
+// Login
+$("btn-login").addEventListener("click", async () => {
+  const email = $("email").value.trim();
+  const password = $("password").value;
+  setStatus($("login-status"), "Accesso in corso...");
+
+  const { data, error } = await sb.auth.signInWithPassword({ email, password });
+  if (error) {
+    setStatus($("login-status"), error.message, "err");
+    return;
+  }
+  currentUser = data.user;
+  onAuthenticated();
+});
+
+$("btn-logout").addEventListener("click", async () => {
+  if (cameraStream) {
+    cameraStream.getTracks().forEach((t) => t.stop());
+    cameraStream = null;
+  }
+  await sb.auth.signOut();
+  currentUser = null;
+  selectedDeckId = null;
+  selectedGroupId = null;
+  $("main-view").classList.add("hidden");
+  $("login-view").classList.remove("hidden");
+});
+
+async function onAuthenticated() {
+  $("login-view").classList.add("hidden");
+  $("main-view").classList.remove("hidden");
+  $("user-badge").textContent = currentUser.email || "";
+  await Promise.all([loadDecks(), loadGroups()]);
+}
+
+function formatSortKey(deck) {
+  const fmt = String(deck.format || deck.type || "").trim();
+  if (!fmt) return [2, 999, String(deck.name || "").toLowerCase()];
+  const idx = PREFERRED_FORMATS.findIndex((p) => p.toLowerCase() === fmt.toLowerCase());
+  if (idx !== -1) return [0, idx, String(deck.name || "").toLowerCase()];
+  return [1, 0, `${fmt.toLowerCase()}__${String(deck.name || "").toLowerCase()}`];
+}
+
+function toArtCropIfPossible(url) {
+  const u = String(url || "").trim();
+  if (!u) return "";
+  for (const variant of ["/normal/", "/large/", "/png/", "/border_crop/", "/small/"]) {
+    if (u.includes(variant)) {
+      return u.replace(variant, "/art_crop/");
+    }
+  }
+  return u;
+}
+
+function extractDeckImageUrl(deck) {
+  if (!deck || typeof deck !== "object") return "";
+  const candidates = [
+    deck.bg_image_url,
+    deck.background_url,
+    deck.bg_url,
+    deck.image_url,
+    deck.card_image_url,
+    deck.art_crop_url,
+    deck.banner_url,
+    deck.commander_image_url,
+  ];
+  for (const val of candidates) {
+    if (typeof val === "string" && val.startsWith("http")) {
+      return toArtCropIfPossible(val);
+    }
+  }
+  return "";
+}
+
+async function resolveDeckArtwork(deck) {
+  const direct = extractDeckImageUrl(deck);
+  if (direct) return direct;
+
+  const candidates = [];
+  if (deck.commander) candidates.push(String(deck.commander).trim());
+  if (deck.name) candidates.push(String(deck.name).trim());
+  if (Array.isArray(deck.cards_json)) {
+    const firstCard = deck.cards_json.find((c) => c && typeof c.name === "string" && c.name.trim());
+    if (firstCard) candidates.push(firstCard.name.trim());
+  }
+
+  for (const queryName of candidates) {
+    if (!queryName) continue;
+    if (artworkCache.has(queryName)) {
+      const cached = artworkCache.get(queryName);
+      if (cached) return cached;
+      continue;
+    }
+
+    try {
+      const url = `https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(queryName)}`;
+      const resp = await fetch(url);
+      if (!resp.ok) {
+        artworkCache.set(queryName, "");
+        continue;
+      }
+      const card = await resp.json();
+      const art =
+        card?.image_uris?.art_crop ||
+        card?.card_faces?.[0]?.image_uris?.art_crop ||
+        card?.image_uris?.normal ||
+        "";
+      artworkCache.set(queryName, art);
+      if (art) return art;
+    } catch {
+      artworkCache.set(queryName, "");
+    }
+  }
+  return "";
+}
+
+// ---- PAGINA MAZZI: LISTA CARD CON IMMAGINE -> SCHEDA MAZZO ----
+async function loadDecks() {
+  setStatus($("deck-list-status"), "Caricamento mazzi...");
+  const { data, error } = await sb
+    .from("decks")
+    .select("*")
+    .eq("owner_id", currentUser.id);
+
+  if (error) {
+    setStatus($("deck-list-status"), error.message, "err");
+    return;
+  }
+
+  myDecks = (data || []).slice().sort((a, b) => {
+    const ka = formatSortKey(a);
+    const kb = formatSortKey(b);
+    if (ka[0] !== kb[0]) return ka[0] - kb[0];
+    if (ka[1] !== kb[1]) return ka[1] - kb[1];
+    return ka[2].localeCompare(kb[2], "it");
+  });
+
+  setStatus($("deck-list-status"), "");
+  renderDecksList();
+
+  for (const d of myDecks) {
+    if (!extractDeckImageUrl(d)) {
+      resolveDeckArtwork(d).then((artUrl) => {
+        if (artUrl) {
+          d._resolvedArtUrl = artUrl;
+          const el = document.querySelector(`[data-deck-card-id="${d.id}"]`);
+          if (el) {
+            el.style.backgroundImage = `url("${artUrl}")`;
+          }
+          if (selectedDeckId === d.id) {
+            applyDeckHeroBg(artUrl);
+          }
+        }
+      });
+    }
+  }
+}
+
+function renderDecksList() {
+  const container = $("decks-list-container");
+  if (!myDecks.length) {
+    container.innerHTML = `<p class="muted">Nessun mazzo trovato sul tuo account.</p>`;
+    return;
+  }
+
+  container.innerHTML = myDecks
+    .map((d) => {
+      const bg = extractDeckImageUrl(d) || d._resolvedArtUrl || "";
+      const bgStyle = bg ? `style="background-image: url('${escapeHtml(bg)}');"` : "";
+      const fmtText = d.format || d.type || "Mazzo";
+      return `
+        <button type="button" class="deck-banner-card" data-deck-card-id="${escapeHtml(d.id)}" ${bgStyle} onclick="openDeckDetail('${escapeHtml(d.id)}')">
+          <div class="deck-banner-content">
+            <div>
+              <div class="deck-banner-title">${escapeHtml(d.name || "Senza nome")}</div>
+              <div class="deck-banner-sub">${escapeHtml(fmtText)}</div>
+            </div>
+            <div class="deck-banner-arrow">›</div>
+          </div>
+        </button>
+      `;
+    })
+    .join("");
+}
+
+function applyDeckHeroBg(bgUrl) {
+  const hero = $("deck-detail-hero");
+  if (bgUrl) {
+    hero.style.backgroundImage = `url("${bgUrl}")`;
+  } else {
+    hero.style.backgroundImage = "none";
+  }
+}
+
+window.openDeckDetail = function (deckId) {
+  const deck = myDecks.find((d) => String(d.id) === String(deckId));
+  if (!deck) return;
+
+  selectedDeckId = deck.id;
+  $("deck-detail-title").textContent = deck.name || "Senza nome";
+  $("deck-detail-format").textContent = deck.format || deck.type || "Mazzo";
+  applyDeckHeroBg(extractDeckImageUrl(deck) || deck._resolvedArtUrl || "");
+  setStatus($("deck-status"), "");
+
+  $("decks-list-view").classList.add("hidden");
+  $("deck-detail-view").classList.remove("hidden");
+};
+
+$("btn-back-to-decks").addEventListener("click", () => {
+  selectedDeckId = null;
+  $("deck-detail-view").classList.add("hidden");
+  $("decks-list-view").classList.remove("hidden");
+});
+
+// Salva partita su deck_history
+$("btn-save-deck-match").addEventListener("click", async () => {
+  const matches = Math.max(1, parseInt($("deck-matches").value || "1", 10));
+  const wins = Math.max(0, Math.min(parseInt($("deck-wins").value || "0", 10), matches));
+  const playedOn = $("deck-date").value || new Date().toISOString().slice(0, 10);
+
+  if (!selectedDeckId) {
+    setStatus($("deck-status"), "Seleziona prima un mazzo.", "err");
+    return;
+  }
+
+  setStatus($("deck-status"), "Salvataggio...");
+  const { error } = await sb.from("deck_history").insert({
+    deck_id: selectedDeckId,
+    user_id: currentUser.id,
+    played_on: playedOn,
+    match: matches,
+    win: wins,
+  });
+
+  if (error) {
+    setStatus($("deck-status"), error.message, "err");
+    return;
+  }
+  $("deck-wins").value = "0";
+  setStatus($("deck-status"), "Partita salvata! La ritroverai nell'app desktop.", "ok");
+});
+
+// ---- PAGINA GRUPPI: LISTA GRUPPI -> SCHEDA GRUPPO CON PARTITE ----
+async function loadGroups() {
+  setStatus($("group-list-status"), "Caricamento gruppi...");
+  const { data: memberships, error } = await sb
+    .from("group_members")
+    .select("group_id")
+    .eq("user_id", currentUser.id);
+
+  if (error) {
+    setStatus($("group-list-status"), error.message, "err");
+    return;
+  }
+
+  const groupIds = (memberships || []).map((m) => m.group_id);
+  if (!groupIds.length) {
+    myGroups = [];
+    setStatus($("group-list-status"), "");
+    $("groups-list-container").innerHTML = `<p class="muted">Non fai ancora parte di nessun gruppo.</p>`;
+    return;
+  }
+
+  const { data: groupsData, error: gErr } = await sb
+    .from("groups")
+    .select("id, name")
+    .in("id", groupIds)
+    .order("name", { ascending: true });
+
+  if (gErr) {
+    setStatus($("group-list-status"), gErr.message, "err");
+    return;
+  }
+
+  myGroups = groupsData || [];
+  setStatus($("group-list-status"), "");
+  renderGroupsList();
+}
+
+function renderGroupsList() {
+  const container = $("groups-list-container");
+  if (!myGroups.length) {
+    container.innerHTML = `<p class="muted">Nessun gruppo trovato.</p>`;
+    return;
+  }
+
+  container.innerHTML = myGroups
+    .map(
+      (g) => `
+        <div class="group-card" onclick="openGroupDetail('${escapeHtml(g.id)}')">
+          <div>
+            <div class="group-card-title">${escapeHtml(g.name || "Gruppo")}</div>
+            <div class="muted">Tocca per registrare una partita</div>
+          </div>
+          <div class="deck-banner-arrow">›</div>
+        </div>
+      `
+    )
+    .join("");
+}
+
+window.openGroupDetail = async function (groupId) {
+  const grp = myGroups.find((g) => String(g.id) === String(groupId));
+  if (!grp) return;
+
+  selectedGroupId = grp.id;
+  $("group-detail-title").textContent = grp.name || "Gruppo";
+  $("group-players-container").innerHTML = `<p class="muted">Caricamento partecipanti e mazzi...</p>`;
+  setStatus($("group-status"), "");
+
+  $("groups-list-view").classList.add("hidden");
+  $("group-detail-view").classList.remove("hidden");
+
+  await loadGroupDetails(grp.id);
+};
+
+$("btn-back-to-groups").addEventListener("click", () => {
+  selectedGroupId = null;
+  $("group-detail-view").classList.add("hidden");
+  $("groups-list-view").classList.remove("hidden");
+});
+
+async function loadGroupDetails(groupId) {
+  if (!groupId) return;
+
+  const [{ data: members }, { data: decks }] = await Promise.all([
+    sb.from("group_members").select("user_id").eq("group_id", groupId),
+    sb.from("group_decks").select("*").eq("group_id", groupId),
+  ]);
+
+  const memberIds = (members || []).map((m) => m.user_id);
+  groupDecks = decks || [];
+
+  let profiles = [];
+  if (memberIds.length) {
+    const { data: profData } = await sb
+      .from("profiles")
+      .select("id, nickname")
+      .in("id", memberIds);
+    profiles = profData || [];
+  }
+
+  const nickMap = Object.fromEntries(profiles.map((p) => [p.id, p.nickname || p.id.slice(0, 6)]));
+  groupMembers = memberIds.map((uid) => ({ user_id: uid, name: nickMap[uid] || uid.slice(0, 6) }));
+
+  renderGroupPlayers();
+}
+
+function getDecksForMember(userId, allGroupDecks) {
+  const owned = allGroupDecks.filter((d) => {
+    const owner = d.owner_id ?? d.user_id ?? null;
+    return owner && String(owner) === String(userId);
+  });
+  if (owned.length) return owned;
+
+  return allGroupDecks.filter((d) => !(d.owner_id ?? d.user_id));
+}
+
+function renderGroupPlayers() {
+  if (!groupMembers.length) {
+    $("group-players-container").innerHTML = `<p class="muted">Nessun membro trovato.</p>`;
+    return;
+  }
+
+  $("group-players-container").innerHTML = groupMembers
+    .map((m, idx) => {
+      const memberDecks = getDecksForMember(m.user_id, groupDecks);
+      const deckOpts = memberDecks.length
+        ? memberDecks.map((d) => `<option value="${escapeHtml(d.id)}">${escapeHtml(d.name)}</option>`).join("")
+        : `<option value="" disabled>Nessun mazzo assegnato a ${escapeHtml(m.name)}</option>`;
+
+      return `
+        <div class="player-box">
+          <strong>${escapeHtml(m.name)}</strong>
+          <label>Mazzo usato</label>
+          <select class="gp-deck" data-user-id="${escapeHtml(m.user_id)}">
+            <option value="">— Seleziona mazzo —</option>
+            ${deckOpts}
+          </select>
+          <label class="winner-row">
+            <input type="radio" name="winner" value="${escapeHtml(m.user_id)}" ${idx === 0 ? "checked" : ""} />
+            <span>Vincitore</span>
+          </label>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+// Salva partita di gruppo su matches + match_players
+$("btn-save-group-match").addEventListener("click", async () => {
+  const notes = $("group-notes").value.trim() || null;
+  const winnerEl = document.querySelector('input[name="winner"]:checked');
+  const winnerId = winnerEl ? winnerEl.value : null;
+
+  if (!selectedGroupId || !winnerId) {
+    setStatus($("group-status"), "Seleziona gruppo e vincitore.", "err");
+    return;
+  }
+
+  const rows = [];
+  document.querySelectorAll(".gp-deck").forEach((sel, i) => {
+    const deckVal = sel.value || null;
+    if (deckVal) {
+      rows.push({
+        user_id: sel.dataset.userId,
+        group_deck_id: deckVal,
+        is_winner: sel.dataset.userId === winnerId,
+        seat: i + 1,
+      });
+    }
+  });
+
+  if (rows.length < 2) {
+    setStatus($("group-status"), "Seleziona un mazzo del gruppo per almeno 2 giocatori.", "err");
+    return;
+  }
+
+  setStatus($("group-status"), "Salvataggio partita...");
+  const { data: matchRow, error: matchErr } = await sb
+    .from("matches")
+    .insert({
+      group_id: selectedGroupId,
+      played_on: new Date().toISOString(),
+      created_by: currentUser.id,
+      notes,
+    })
+    .select("id")
+    .single();
+
+  if (matchErr) {
+    setStatus($("group-status"), matchErr.message, "err");
+    return;
+  }
+
+  const playersPayload = rows.map((r) => ({ ...r, match_id: matchRow.id }));
+  const { error: mpErr } = await sb.from("match_players").insert(playersPayload);
+
+  if (mpErr) {
+    setStatus($("group-status"), mpErr.message, "err");
+    return;
+  }
+
+  $("group-notes").value = "";
+  setStatus($("group-status"), "Partita di gruppo salvata! La ritroverai nell'app desktop.", "ok");
+});
+
+// ---- COLLEZIONE: RICERCA SCRYFALL + SALVATAGGIO ----
+function renderCardResultsList(cards) {
+  $("card-results").innerHTML = cards
+    .map((c) => {
+      const img = c.image_uris?.normal || c.card_faces?.[0]?.image_uris?.normal || "";
+      const payload = encodeURIComponent(JSON.stringify({
+        scryfall_id: c.id,
+        name: c.name,
+        set_code: (c.set || "").toUpperCase(),
+        set_name: c.set_name || "",
+        collector_number: c.collector_number || "",
+        released_at: c.released_at || "",
+        rarity: c.rarity || "",
+        type_line: c.type_line || "",
+        mana_cost: c.mana_cost || "",
+        cmc: c.cmc || 0,
+        colors: c.colors || [],
+        image_url: img,
+        card_image_url: img,
+        price_eur: c.prices?.eur ? parseFloat(c.prices.eur) : null,
+        price_eur_foil: c.prices?.eur_foil ? parseFloat(c.prices.eur_foil) : null,
+      }));
+
+      return `
+        <div class="card-item">
+          <div>
+            <strong>${escapeHtml(c.name)}</strong><br />
+            <span class="muted">${escapeHtml((c.set || "").toUpperCase())} #${escapeHtml(c.collector_number || "")} · ${escapeHtml(c.set_name || "")}</span>
+          </div>
+          <button class="btn small" onclick="addCardToCollection('${payload}', false)">+ Norm</button>
+          <button class="btn small" onclick="addCardToCollection('${payload}', true)">+ Foil</button>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+$("btn-search-card").addEventListener("click", async () => {
+  const q = $("card-search-input").value.trim();
+  if (!q) return;
+
+  setStatus($("collection-status"), "Ricerca su Scryfall...");
+  $("card-results").innerHTML = "";
+
+  try {
+    const resp = await fetch(`https://api.scryfall.com/cards/search?q=${encodeURIComponent(q)}&unique=prints`);
+    const json = await resp.json();
+    const cards = (json.data || []).slice(0, 8);
+
+    if (!cards.length) {
+      setStatus($("collection-status"), "Nessuna carta trovata.", "err");
+      return;
+    }
+
+    setStatus($("collection-status"), "");
+    renderCardResultsList(cards);
+  } catch (err) {
+    setStatus($("collection-status"), `Errore Scryfall: ${err.message}`, "err");
+  }
+});
+
+window.addCardToCollection = async function (encodedPayload, isFoil) {
+  const card = JSON.parse(decodeURIComponent(encodedPayload));
+  setStatus($("collection-status"), `Aggiunta ${card.name} (${isFoil ? "Foil" : "Norm"})...`);
+
+  const { data: existing } = await sb
+    .from("user_collection")
+    .select("id, quantity")
+    .eq("user_id", currentUser.id)
+    .eq("scryfall_id", card.scryfall_id)
+    .eq("foil", isFoil)
+    .maybeSingle();
+
+  if (existing) {
+    const { error } = await sb
+      .from("user_collection")
+      .update({ quantity: (existing.quantity || 1) + 1 })
+      .eq("id", existing.id);
+
+    if (error) {
+      setStatus($("collection-status"), error.message, "err");
+      return;
+    }
+    setStatus($("collection-status"), `Quantità aggiornata per ${card.name}!`, "ok");
+    return;
+  }
+
+  const { error } = await sb.from("user_collection").insert({
+    user_id: currentUser.id,
+    ...card,
+    foil: isFoil,
+    quantity: 1,
+  });
+
+  if (error) {
+    setStatus($("collection-status"), error.message, "err");
+    return;
+  }
+  setStatus($("collection-status"), `${card.name} aggiunta alla collezione!`, "ok");
+};
+
+// ---- SCANNER ZONA IN BASSO A SINISTRA (OCR + SCRYFALL) ----
+function syncRoiBox() {
+  const x = parseInt($("roi-x")?.value || "6", 10);
+  const y = parseInt($("roi-y")?.value || "78", 10);
+  const w = parseInt($("roi-w")?.value || "44", 10);
+  const h = parseInt($("roi-h")?.value || "14", 10);
+
+  if ($("roi-x-val")) $("roi-x-val").textContent = `${x}%`;
+  if ($("roi-y-val")) $("roi-y-val").textContent = `${y}%`;
+  if ($("roi-w-val")) $("roi-w-val").textContent = `${w}%`;
+  if ($("roi-h-val")) $("roi-h-val").textContent = `${h}%`;
+
+  const box = $("scan-roi-box");
+  if (box) {
+    box.style.left = `${x}%`;
+    box.style.top = `${y}%`;
+    box.style.width = `${w}%`;
+    box.style.height = `${h}%`;
+  }
+}
+
+["roi-x", "roi-y", "roi-w", "roi-h"].forEach((id) => {
+  $(id)?.addEventListener("input", syncRoiBox);
+});
+syncRoiBox();
+
+function stopCameraStream() {
+  if (cameraStream) {
+    cameraStream.getTracks().forEach((t) => t.stop());
+    cameraStream = null;
+  }
+}
+
+$("btn-open-camera")?.addEventListener("click", async () => {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    setStatus($("collection-status"), "Fotocamera live non supportata qui: usa 'Carica foto'.", "err");
+    return;
+  }
+
+  try {
+    stopCameraStream();
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: "environment" } },
+      audio: false,
+    });
+    const video = $("scan-video");
+    const img = $("scan-preview-img");
+    loadedScanImage = null;
+    img.classList.add("hidden");
+    video.srcObject = cameraStream;
+    video.classList.remove("hidden");
+    $("scanner-stage").classList.remove("hidden");
+    $("roi-controls").classList.remove("hidden");
+    setStatus($("collection-status"), "Fotocamera attiva: allinea il riquadro giallo in basso a sinistra.", "");
+  } catch (err) {
+    setStatus($("collection-status"), `Impossibile aprire la fotocamera: ${err.message}`, "err");
+  }
+});
+
+$("scan-file-input")?.addEventListener("change", (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  stopCameraStream();
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    const img = $("scan-preview-img");
+    const video = $("scan-video");
+    video.classList.add("hidden");
+    img.onload = () => {
+      loadedScanImage = img;
+      img.classList.remove("hidden");
+      $("scanner-stage").classList.remove("hidden");
+      $("roi-controls").classList.remove("hidden");
+    };
+    img.src = reader.result;
+  };
+  reader.readAsDataURL(file);
+});
+
+function captureCroppedCanvas() {
+  const video = $("scan-video");
+  const img = $("scan-preview-img");
+  let sourceEl = null;
+  let srcW = 0;
+  let srcH = 0;
+
+  if (!video.classList.contains("hidden") && video.videoWidth > 0) {
+    sourceEl = video;
+    srcW = video.videoWidth;
+    srcH = video.videoHeight;
+  } else if (loadedScanImage && loadedScanImage.naturalWidth > 0) {
+    sourceEl = img;
+    srcW = loadedScanImage.naturalWidth;
+    srcH = loadedScanImage.naturalHeight;
+  }
+
+  if (!sourceEl || !srcW || !srcH) return null;
+
+  const rx = (parseInt($("roi-x")?.value || "6", 10)) / 100;
+  const ry = (parseInt($("roi-y")?.value || "78", 10)) / 100;
+  const rw = (parseInt($("roi-w")?.value || "44", 10)) / 100;
+  const rh = (parseInt($("roi-h")?.value || "14", 10)) / 100;
+
+  const sx = Math.max(0, Math.min(srcW - 1, Math.floor(srcW * rx)));
+  const sy = Math.max(0, Math.min(srcH - 1, Math.floor(srcH * ry)));
+  const sw = Math.max(10, Math.min(srcW - sx, Math.floor(srcW * rw)));
+  const sh = Math.max(10, Math.min(srcH - sy, Math.floor(srcH * rh)));
+
+  const canvas = $("scan-crop-canvas");
+  const scale = Math.max(2, 900 / sw);
+  canvas.width = Math.floor(sw * scale);
+  canvas.height = Math.floor(sh * scale);
+
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(sourceEl, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+
+  const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const d = imgData.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+    const boosted = Math.max(0, Math.min(255, (lum - 128) * 1.45 + 128));
+    d[i] = d[i + 1] = d[i + 2] = boosted;
+  }
+  ctx.putImageData(imgData, 0, 0);
+  return canvas;
+}
+
+function parseSetAndNumberFromOcr(rawText) {
+  const clean = String(rawText || "").replace(/\s+/g, " ").trim();
+  const numMatch = clean.match(/\b0*([1-9]\d{0,3})\b/);
+  const collectorNumber = numMatch ? numMatch[1] : "";
+
+  const tokens = clean.toUpperCase().match(/\b[A-Z0-9]{3,4}\b/g) || [];
+  const ignoredCodes = new Set(["EN", "IT", "FR", "DE", "ES", "PT", "JA", "KO", "RU", "ZHT", "ZHS", "FOIL", "NOT"]);
+  const setCode = tokens.find((t) => !ignoredCodes.has(t) && !/^\d+$/.test(t)) || "";
+
+  return { clean, setCode, collectorNumber };
+}
+
+$("btn-run-ocr")?.addEventListener("click", async () => {
+  if (typeof Tesseract === "undefined") {
+    setStatus($("collection-status"), "Libreria OCR non caricata: verifica la connessione internet.", "err");
+    return;
+  }
+
+  const canvas = captureCroppedCanvas();
+  if (!canvas) {
+    setStatus($("collection-status"), "Apri la fotocamera o carica prima una foto della carta.", "err");
+    return;
+  }
+
+  setStatus($("collection-status"), "Lettura OCR in basso a sinistra...");
+  $("scan-ocr-readout").textContent = "";
+
+  try {
+    const { data } = await Tesseract.recognize(canvas, "eng");
+    const parsed = parseSetAndNumberFromOcr(data?.text || "");
+    const nameHint = ($("scan-name-hint")?.value || "").trim();
+
+    $("scan-ocr-readout").textContent =
+      `Testo letto: "${parsed.clean || "—"}"` +
+      (parsed.setCode ? ` · Set: ${parsed.setCode}` : "") +
+      (parsed.collectorNumber ? ` · #${parsed.collectorNumber}` : "");
+
+    const parts = [];
+    if (nameHint) parts.push(`!"${nameHint}"`);
+    if (parsed.setCode) parts.push(`set:${parsed.setCode.toLowerCase()}`);
+    if (parsed.collectorNumber) parts.push(`cn:${parsed.collectorNumber}`);
+
+    if (!parts.length) {
+      setStatus($("collection-status"), "Non ho letto un numero o codice set chiaro: regola il riquadro o inserisci il nome.", "err");
+      return;
+    }
+
+    const query = parts.join(" ");
+    setStatus($("collection-status"), `Ricerca su Scryfall (${query})...`);
+    const resp = await fetch(`https://api.scryfall.com/cards/search?q=${encodeURIComponent(query)}&unique=prints`);
+    const json = await resp.json();
+    const cards = (json.data || []).slice(0, 10);
+
+    if (!cards.length) {
+      setStatus($("collection-status"), `Nessuna corrispondenza esatta per "${query}". Prova a spostare il riquadro o a indicare il nome.`, "err");
+      return;
+    }
+
+    setStatus($("collection-status"), `Trovate ${cards.length} stampe: scegli finitura e aggiungi.`, "ok");
+    renderCardResultsList(cards);
+  } catch (err) {
+    setStatus($("collection-status"), `Errore OCR/ricerca: ${err.message}`, "err");
+  }
+});
+
+// Ripristina eventuale sessione già attiva
+(async () => {
+  const { data } = await sb.auth.getSession();
+  if (data?.session?.user) {
+    currentUser = data.session.user;
+    onAuthenticated();
+  }
+})();
