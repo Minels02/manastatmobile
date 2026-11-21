@@ -15,8 +15,12 @@ let groupMembers = [];
 let groupDecks = [];
 const artworkCache = new Map();
 
+// Stato dello scanner continuo + proposta Sì/No + lista scartate
 let cameraStream = null;
-let loadedScanImage = null;
+let scanLoopTimer = null;
+let isScanningFrame = false;
+let pendingProposalCard = null;
+const rejectedCardKeys = new Set();
 
 const PREFERRED_FORMATS = [
   "Commander",
@@ -32,6 +36,7 @@ const PREFERRED_FORMATS = [
 ];
 
 function setStatus(el, msg, type = "") {
+  if (!el) return;
   el.textContent = msg;
   el.className = `status ${type}`.trim();
 }
@@ -46,13 +51,32 @@ function escapeHtml(str) {
 
 $("deck-date").value = new Date().toISOString().slice(0, 10);
 
+function updateRejectedBadge() {
+  if ($("rejected-count-badge")) {
+    $("rejected-count-badge").textContent = `Scartate: ${rejectedCardKeys.size}`;
+  }
+}
+
+function setScanStateBadge(text) {
+  if ($("scan-state-badge")) {
+    $("scan-state-badge").textContent = text;
+  }
+}
+
 // Navigazione tab in basso
 document.querySelectorAll(".nav-btn").forEach((btn) => {
-  btn.addEventListener("click", () => {
+  btn.addEventListener("click", async () => {
     document.querySelectorAll(".nav-btn").forEach((b) => b.classList.remove("active"));
     document.querySelectorAll(".tab-panel").forEach((p) => p.classList.remove("active"));
     btn.classList.add("active");
-    $(btn.dataset.tab).classList.add("active");
+    const targetTab = btn.dataset.tab;
+    $(targetTab).classList.add("active");
+
+    if (targetTab === "tab-collection") {
+      await ensureCameraRunning();
+    } else {
+      stopCameraStream();
+    }
   });
 });
 
@@ -72,10 +96,7 @@ $("btn-login").addEventListener("click", async () => {
 });
 
 $("btn-logout").addEventListener("click", async () => {
-  if (cameraStream) {
-    cameraStream.getTracks().forEach((t) => t.stop());
-    cameraStream = null;
-  }
+  stopCameraStream();
   await sb.auth.signOut();
   currentUser = null;
   selectedDeckId = null;
@@ -172,7 +193,7 @@ async function resolveDeckArtwork(deck) {
   return "";
 }
 
-// ---- PAGINA MAZZI: LISTA CARD CON IMMAGINE -> SCHEDA MAZZO ----
+// ---- PAGINA MAZZI ----
 async function loadDecks() {
   setStatus($("deck-list-status"), "Caricamento mazzi...");
   const { data, error } = await sb
@@ -270,7 +291,6 @@ $("btn-back-to-decks").addEventListener("click", () => {
   $("decks-list-view").classList.remove("hidden");
 });
 
-// Salva partita su deck_history
 $("btn-save-deck-match").addEventListener("click", async () => {
   const matches = Math.max(1, parseInt($("deck-matches").value || "1", 10));
   const wins = Math.max(0, Math.min(parseInt($("deck-wins").value || "0", 10), matches));
@@ -298,7 +318,7 @@ $("btn-save-deck-match").addEventListener("click", async () => {
   setStatus($("deck-status"), "Partita salvata! La ritroverai nell'app desktop.", "ok");
 });
 
-// ---- PAGINA GRUPPI: LISTA GRUPPI -> SCHEDA GRUPPO CON PARTITE ----
+// ---- PAGINA GRUPPI ----
 async function loadGroups() {
   setStatus($("group-list-status"), "Caricamento gruppi...");
   const { data: memberships, error } = await sb
@@ -445,7 +465,6 @@ function renderGroupPlayers() {
     .join("");
 }
 
-// Salva partita di gruppo su matches + match_players
 $("btn-save-group-match").addEventListener("click", async () => {
   const notes = $("group-notes").value.trim() || null;
   const winnerEl = document.querySelector('input[name="winner"]:checked');
@@ -503,189 +522,98 @@ $("btn-save-group-match").addEventListener("click", async () => {
   setStatus($("group-status"), "Partita di gruppo salvata! La ritroverai nell'app desktop.", "ok");
 });
 
-// ---- COLLEZIONE: RICERCA SCRYFALL + SALVATAGGIO ----
-function renderCardResultsList(cards) {
-  $("card-results").innerHTML = cards
-    .map((c) => {
-      const img = c.image_uris?.normal || c.card_faces?.[0]?.image_uris?.normal || "";
-      const payload = encodeURIComponent(JSON.stringify({
-        scryfall_id: c.id,
-        name: c.name,
-        set_code: (c.set || "").toUpperCase(),
-        set_name: c.set_name || "",
-        collector_number: c.collector_number || "",
-        released_at: c.released_at || "",
-        rarity: c.rarity || "",
-        type_line: c.type_line || "",
-        mana_cost: c.mana_cost || "",
-        cmc: c.cmc || 0,
-        colors: c.colors || [],
-        image_url: img,
-        card_image_url: img,
-        price_eur: c.prices?.eur ? parseFloat(c.prices.eur) : null,
-        price_eur_foil: c.prices?.eur_foil ? parseFloat(c.prices.eur_foil) : null,
-      }));
-
-      return `
-        <div class="card-item">
-          <div>
-            <strong>${escapeHtml(c.name)}</strong><br />
-            <span class="muted">${escapeHtml((c.set || "").toUpperCase())} #${escapeHtml(c.collector_number || "")} · ${escapeHtml(c.set_name || "")}</span>
-          </div>
-          <button class="btn small" onclick="addCardToCollection('${payload}', false)">+ Norm</button>
-          <button class="btn small" onclick="addCardToCollection('${payload}', true)">+ Foil</button>
-        </div>
-      `;
-    })
-    .join("");
-}
-
-$("btn-search-card").addEventListener("click", async () => {
-  const q = $("card-search-input").value.trim();
-  if (!q) return;
-
-  setStatus($("collection-status"), "Ricerca su Scryfall...");
-  $("card-results").innerHTML = "";
-
-  try {
-    const resp = await fetch(`https://api.scryfall.com/cards/search?q=${encodeURIComponent(q)}&unique=prints`);
-    const json = await resp.json();
-    const cards = (json.data || []).slice(0, 8);
-
-    if (!cards.length) {
-      setStatus($("collection-status"), "Nessuna carta trovata.", "err");
-      return;
-    }
-
-    setStatus($("collection-status"), "");
-    renderCardResultsList(cards);
-  } catch (err) {
-    setStatus($("collection-status"), `Errore Scryfall: ${err.message}`, "err");
-  }
-});
-
-window.addCardToCollection = async function (encodedPayload, isFoil) {
-  const card = JSON.parse(decodeURIComponent(encodedPayload));
-  setStatus($("collection-status"), `Aggiunta ${card.name} (${isFoil ? "Foil" : "Norm"})...`);
-
-  const { data: existing } = await sb
+// ---- SALVATAGGIO CARTA IN COLLEZIONE ----
+async function saveCardPayloadToCollection(cardPayload, isFoil) {
+  const { error: checkErr } = await sb
     .from("user_collection")
     .select("id, quantity")
     .eq("user_id", currentUser.id)
-    .eq("scryfall_id", card.scryfall_id)
+    .eq("scryfall_id", cardPayload.scryfall_id)
     .eq("foil", isFoil)
-    .maybeSingle();
+    .maybeSingle()
+    .then(async ({ data: existing, error }) => {
+      if (error) return { error };
+      if (existing) {
+        return sb
+          .from("user_collection")
+          .update({ quantity: (existing.quantity || 1) + 1 })
+          .eq("id", existing.id);
+      }
+      return sb.from("user_collection").insert({
+        user_id: currentUser.id,
+        ...cardPayload,
+        foil: isFoil,
+        quantity: 1,
+      });
+    });
 
-  if (existing) {
-    const { error } = await sb
-      .from("user_collection")
-      .update({ quantity: (existing.quantity || 1) + 1 })
-      .eq("id", existing.id);
-
-    if (error) {
-      setStatus($("collection-status"), error.message, "err");
-      return;
-    }
-    setStatus($("collection-status"), `Quantità aggiornata per ${card.name}!`, "ok");
-    return;
-  }
-
-  const { error } = await sb.from("user_collection").insert({
-    user_id: currentUser.id,
-    ...card,
-    foil: isFoil,
-    quantity: 1,
-  });
-
-  if (error) {
-    setStatus($("collection-status"), error.message, "err");
-    return;
-  }
-  setStatus($("collection-status"), `${card.name} aggiunta alla collezione!`, "ok");
-};
-// ---- AUTO-SCANNER GENERALE CARTA (OCR + SCRYFALL) ----
-let autoScanEnabled = true;
-let autoScanTimer = null;
-let isScanningFrame = false;
-let lastMatchedSignature = "";
-
-function syncRoiBox() {
-  const x = parseInt($("roi-x")?.value || "6", 10);
-  const y = parseInt($("roi-y")?.value || "6", 10);
-  const w = parseInt($("roi-w")?.value || "88", 10);
-  const h = parseInt($("roi-h")?.value || "22", 10);
-
-  if ($("roi-x-val")) $("roi-x-val").textContent = `${x}%`;
-  if ($("roi-y-val")) $("roi-y-val").textContent = `${y}%`;
-  if ($("roi-w-val")) $("roi-w-val").textContent = `${w}%`;
-  if ($("roi-h-val")) $("roi-h-val").textContent = `${h}%`;
-
-  const box = $("scan-roi-box");
-  if (box) {
-    box.style.left = `${x}%`;
-    box.style.top = `${y}%`;
-    box.style.width = `${w}%`;
-    box.style.height = `${h}%`;
+  if (checkErr) {
+    throw new Error(checkErr.message);
   }
 }
 
-["roi-x", "roi-y", "roi-w", "roi-h"].forEach((id) => {
-  $(id)?.addEventListener("input", syncRoiBox);
-});
-syncRoiBox();
-
-function stopAutoScanLoop() {
-  if (autoScanTimer) {
-    clearInterval(autoScanTimer);
-    autoScanTimer = null;
-  }
+function buildCollectionPayloadFromScryfall(c) {
+  const img = c.image_uris?.normal || c.card_faces?.[0]?.image_uris?.normal || "";
+  return {
+    scryfall_id: c.id,
+    name: c.name,
+    set_code: (c.set || "").toUpperCase(),
+    set_name: c.set_name || "",
+    collector_number: c.collector_number || "",
+    released_at: c.released_at || "",
+    rarity: c.rarity || "",
+    type_line: c.type_line || "",
+    mana_cost: c.mana_cost || "",
+    cmc: c.cmc || 0,
+    colors: c.colors || [],
+    image_url: img,
+    card_image_url: img,
+    price_eur: c.prices?.eur ? parseFloat(c.prices.eur) : null,
+    price_eur_foil: c.prices?.eur_foil ? parseFloat(c.prices.eur_foil) : null,
+  };
 }
 
-function startAutoScanLoop() {
-  stopAutoScanLoop();
-  if (!autoScanEnabled) return;
-  autoScanTimer = setInterval(() => {
-    const video = $("scan-video");
-    const isVideoLive = video && !video.classList.contains("hidden") && video.readyState >= 2;
-    if (isVideoLive && autoScanEnabled && !isScanningFrame) {
-      runCardScan({ silentIfNoMatch: true });
-    }
-  }, 1800);
+// ---- SCANNER TELECAMERA + PROPOSTA SÌ / NO ----
+function stopScanLoop() {
+  if (scanLoopTimer) {
+    clearInterval(scanLoopTimer);
+    scanLoopTimer = null;
+  }
 }
 
 function stopCameraStream() {
-  stopAutoScanLoop();
+  stopScanLoop();
   if (cameraStream) {
     cameraStream.getTracks().forEach((t) => t.stop());
     cameraStream = null;
   }
 }
 
-$("btn-toggle-autoscan")?.addEventListener("click", () => {
-  autoScanEnabled = !autoScanEnabled;
-  const btn = $("btn-toggle-autoscan");
-  if (btn) {
-    btn.textContent = autoScanEnabled ? "⏸️ Pausa auto" : "▶️ Riprendi auto";
-  }
-  if (autoScanEnabled) {
-    lastMatchedSignature = "";
-    startAutoScanLoop();
-    setStatus($("collection-status"), "Auto-scan attivo: inquadra una carta.", "");
-  } else {
-    stopAutoScanLoop();
-    setStatus($("collection-status"), "Auto-scan in pausa.", "");
-  }
-});
+function startScanLoop() {
+  stopScanLoop();
+  scanLoopTimer = setInterval(() => {
+    if (pendingProposalCard) return;
+    if (isScanningFrame) return;
+    const video = $("scan-video");
+    if (!video || video.readyState < 2) return;
+    scanCurrentVideoFrame();
+  }, 1700);
+}
 
-$("btn-open-camera")?.addEventListener("click", async () => {
+async function ensureCameraRunning() {
+  updateRejectedBadge();
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    setStatus($("collection-status"), "Fotocamera live non supportata qui: usa 'Carica foto'.", "err");
+    setStatus($("collection-status"), "Fotocamera non disponibile su questo browser.", "err");
+    return;
+  }
+
+  if (cameraStream) {
+    startScanLoop();
     return;
   }
 
   try {
-    stopCameraStream();
-    lastMatchedSignature = "";
+    setScanStateBadge("Avvio fotocamera...");
     cameraStream = await navigator.mediaDevices.getUserMedia({
       video: {
         facingMode: { ideal: "environment" },
@@ -694,210 +622,177 @@ $("btn-open-camera")?.addEventListener("click", async () => {
       },
       audio: false,
     });
+
     const video = $("scan-video");
-    const img = $("scan-preview-img");
-    loadedScanImage = null;
-    img.classList.add("hidden");
     video.srcObject = cameraStream;
-    video.classList.remove("hidden");
-    $("scanner-stage").classList.remove("hidden");
-    $("roi-controls").classList.remove("hidden");
-
-    autoScanEnabled = true;
-    if ($("btn-toggle-autoscan")) $("btn-toggle-autoscan").textContent = "⏸️ Pausa auto";
-    startAutoScanLoop();
-    setStatus($("collection-status"), "Fotocamera pronta: inquadro e riconosco in automatico...", "");
+    $("camera-placeholder")?.classList.add("hidden");
+    setScanStateBadge("Inquadra una carta...");
+    setStatus($("collection-status"), "Scansione automatica attiva.", "");
+    startScanLoop();
   } catch (err) {
-    setStatus($("collection-status"), `Impossibile aprire la fotocamera: ${err.message}`, "err");
+    setScanStateBadge("Fotocamera bloccata");
+    $("camera-placeholder")?.classList.remove("hidden");
+    setStatus($("collection-status"), `Errore fotocamera: ${err.message}`, "err");
   }
+}
+
+$("btn-start-camera")?.addEventListener("click", ensureCameraRunning);
+
+$("btn-reset-rejected")?.addEventListener("click", () => {
+  rejectedCardKeys.clear();
+  updateRejectedBadge();
+  setStatus($("collection-status"), "Lista carte scartate azzerata.", "ok");
 });
 
-$("scan-file-input")?.addEventListener("change", (e) => {
-  const file = e.target.files?.[0];
-  if (!file) return;
-  stopCameraStream();
-  lastMatchedSignature = "";
-
-  const reader = new FileReader();
-  reader.onload = () => {
-    const img = $("scan-preview-img");
-    const video = $("scan-video");
-    video.classList.add("hidden");
-    img.onload = () => {
-      loadedScanImage = img;
-      img.classList.remove("hidden");
-      $("scanner-stage").classList.remove("hidden");
-      $("roi-controls").classList.remove("hidden");
-      runCardScan({ silentIfNoMatch: false });
-    };
-    img.src = reader.result;
-  };
-  reader.readAsDataURL(file);
-});
-
-function captureCroppedCanvas() {
+function captureFrameCanvas() {
   const video = $("scan-video");
-  const img = $("scan-preview-img");
-  let sourceEl = null;
-  let srcW = 0;
-  let srcH = 0;
+  if (!video || !video.videoWidth || !video.videoHeight) return null;
 
-  if (!video.classList.contains("hidden") && video.videoWidth > 0) {
-    sourceEl = video;
-    srcW = video.videoWidth;
-    srcH = video.videoHeight;
-  } else if (loadedScanImage && loadedScanImage.naturalWidth > 0) {
-    sourceEl = img;
-    srcW = loadedScanImage.naturalWidth;
-    srcH = loadedScanImage.naturalHeight;
-  }
-
-  if (!sourceEl || !srcW || !srcH) return null;
-
-  const rx = (parseInt($("roi-x")?.value || "6", 10)) / 100;
-  const ry = (parseInt($("roi-y")?.value || "6", 10)) / 100;
-  const rw = (parseInt($("roi-w")?.value || "88", 10)) / 100;
-  const rh = (parseInt($("roi-h")?.value || "22", 10)) / 100;
-
-  const sx = Math.max(0, Math.min(srcW - 1, Math.floor(srcW * rx)));
-  const sy = Math.max(0, Math.min(srcH - 1, Math.floor(srcH * ry)));
-  const sw = Math.max(10, Math.min(srcW - sx, Math.floor(srcW * rw)));
-  const sh = Math.max(10, Math.min(srcH - sy, Math.floor(srcH * rh)));
+  const srcW = video.videoWidth;
+  const srcH = video.videoHeight;
+  // Ritaglia l'area centrale/superiore dove compare il nome della carta
+  const sx = Math.floor(srcW * 0.06);
+  const sy = Math.floor(srcH * 0.05);
+  const sw = Math.floor(srcW * 0.88);
+  const sh = Math.floor(srcH * 0.28);
 
   const canvas = $("scan-crop-canvas");
-  const scale = Math.max(2.5, 1100 / sw);
+  const scale = Math.max(2, 1000 / Math.max(1, sw));
   canvas.width = Math.floor(sw * scale);
   canvas.height = Math.floor(sh * scale);
 
   const ctx = canvas.getContext("2d");
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = "high";
-  ctx.drawImage(sourceEl, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+  ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
 
   const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const d = imgData.data;
   for (let i = 0; i < d.length; i += 4) {
     const lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-    const contrasted = Math.max(0, Math.min(255, (lum - 128) * 1.55 + 128));
-    d[i] = d[i + 1] = d[i + 2] = contrasted;
+    const boosted = Math.max(0, Math.min(255, (lum - 128) * 1.5 + 128));
+    d[i] = d[i + 1] = d[i + 2] = boosted;
   }
   ctx.putImageData(imgData, 0, 0);
   return canvas;
 }
 
-function extractCandidateCardTitle(rawText) {
+function extractCandidateTitle(rawText) {
   const lines = String(rawText || "")
     .split(/\r?\n/)
     .map((l) => l.replace(/[^A-Za-zÀ-ÖØ-öø-ÿ,'\- /]/g, " ").replace(/\s+/g, " ").trim())
     .filter((l) => l.length >= 3);
 
   if (!lines.length) return "";
-  // Prende la prima riga significativa che assomiglia al titolo della carta
-  const bestLine = lines.find((l) => l.split(" ").length <= 6) || lines[0];
-  return bestLine.slice(0, 60).trim();
+  return (lines.find((l) => l.split(" ").length <= 6) || lines[0]).slice(0, 60).trim();
 }
 
-async function recognizeCardFromTitle(title) {
-  if (!title) return [];
-
-  // 1) Ricerca esatta / nome carta su Scryfall
+async function lookupScryfallCard(title) {
+  if (!title || title.length < 3) return null;
   try {
-    const namedResp = await fetch(`https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(title)}`);
-    if (namedResp.ok) {
-      const card = await namedResp.json();
-      if (card?.name) {
-        const printsResp = await fetch(
-          `https://api.scryfall.com/cards/search?q=${encodeURIComponent(`!"${card.name}"`)}&unique=prints`
-        );
-        if (printsResp.ok) {
-          const printsJson = await printsResp.json();
-          if (Array.isArray(printsJson.data) && printsJson.data.length) {
-            return printsJson.data.slice(0, 8);
-          }
-        }
-        return [card];
-      }
-    }
+    const resp = await fetch(`https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(title)}`);
+    if (!resp.ok) return null;
+    const card = await resp.json();
+    if (!card || !card.name) return null;
+    return card;
   } catch {
-    // continua con ricerca testuale
+    return null;
   }
-
-  // 2) Fallback ricerca generica per nome
-  try {
-    const qResp = await fetch(`https://api.scryfall.com/cards/search?q=${encodeURIComponent(title)}&unique=prints`);
-    if (qResp.ok) {
-      const qJson = await qResp.json();
-      if (Array.isArray(qJson.data) && qJson.data.length) {
-        return qJson.data.slice(0, 8);
-      }
-    }
-  } catch {
-    // nessuno
-  }
-
-  return [];
 }
 
-async function runCardScan({ silentIfNoMatch = false } = {}) {
-  if (typeof Tesseract === "undefined") {
-    if (!silentIfNoMatch) {
-      setStatus($("collection-status"), "Libreria OCR non caricata: verifica la connessione internet.", "err");
-    }
+function showCardProposal(scryfallCard) {
+  const payload = buildCollectionPayloadFromScryfall(scryfallCard);
+  const rejectKey = String(payload.scryfall_id || payload.name).toLowerCase();
+
+  if (rejectedCardKeys.has(rejectKey)) {
+    setScanStateBadge("Carta già scartata, continuo...");
     return;
   }
 
-  if (isScanningFrame) return;
-  const canvas = captureCroppedCanvas();
-  if (!canvas) {
-    if (!silentIfNoMatch) {
-      setStatus($("collection-status"), "Avvia la fotocamera o carica prima una foto della carta.", "err");
-    }
-    return;
+  pendingProposalCard = { payload, rejectKey };
+  stopScanLoop();
+  setScanStateBadge("Carta trovata");
+
+  $("proposal-name").textContent = payload.name;
+  $("proposal-meta").textContent =
+    `${payload.set_code || ""}${payload.collector_number ? ` #${payload.collector_number}` : ""} · ${payload.set_name || ""}`;
+
+  const imgEl = $("proposal-img");
+  if (payload.image_url) {
+    imgEl.src = payload.image_url;
+    imgEl.classList.remove("hidden");
+  } else {
+    imgEl.classList.add("hidden");
   }
+
+  $("proposal-modal")?.classList.remove("hidden");
+}
+
+function hideCardProposalAndResume() {
+  pendingProposalCard = null;
+  $("proposal-modal")?.classList.add("hidden");
+  setScanStateBadge("Inquadra una carta...");
+  if (cameraStream) {
+    startScanLoop();
+  }
+}
+
+$("btn-proposal-no")?.addEventListener("click", () => {
+  if (pendingProposalCard) {
+    rejectedCardKeys.add(pendingProposalCard.rejectKey);
+    updateRejectedBadge();
+  }
+  setStatus($("collection-status"), "Carta scartata: non verrà riproposta.", "");
+  hideCardProposalAndResume();
+});
+
+$("btn-proposal-yes")?.addEventListener("click", async () => {
+  if (!pendingProposalCard) return;
+  const { payload } = pendingProposalCard;
+  const isFoil = $("scan-finish-select")?.value === "foil";
+
+  try {
+    setStatus($("collection-status"), `Aggiunta ${payload.name} alla collezione...`);
+    await saveCardPayloadToCollection(payload, isFoil);
+
+    // Confermando "Sì" si azzera la lista delle carte scartate
+    rejectedCardKeys.clear();
+    updateRejectedBadge();
+    setStatus($("collection-status"), `${payload.name} aggiunta alla collezione! Scartate azzerate.`, "ok");
+  } catch (err) {
+    setStatus($("collection-status"), `Errore salvataggio: ${err.message}`, "err");
+  } finally {
+    hideCardProposalAndResume();
+  }
+});
+
+async function scanCurrentVideoFrame() {
+  if (typeof Tesseract === "undefined" || isScanningFrame || pendingProposalCard) return;
+  const canvas = captureFrameCanvas();
+  if (!canvas) return;
 
   isScanningFrame = true;
   try {
     const { data } = await Tesseract.recognize(canvas, "eng");
-    const candidateTitle = extractCandidateCardTitle(data?.text || "");
-    if ($("scan-ocr-readout")) {
-      $("scan-ocr-readout").textContent = candidateTitle
-        ? `Riconosciuto testo: "${candidateTitle}"`
-        : "Inquadra il nome della carta nel riquadro giallo...";
-    }
+    const title = extractCandidateTitle(data?.text || "");
+    if (!title || pendingProposalCard) return;
 
-    if (!candidateTitle || candidateTitle.length < 3) {
-      if (!silentIfNoMatch) {
-        setStatus($("collection-status"), "Nessun nome carta leggibile: sposta il riquadro sul titolo.", "err");
-      }
-      return;
+    const card = await lookupScryfallCard(title);
+    if (card && !pendingProposalCard) {
+      showCardProposal(card);
     }
-
-    const cards = await recognizeCardFromTitle(candidateTitle);
-    if (!cards.length) {
-      if (!silentIfNoMatch) {
-        setStatus($("collection-status"), `Nessuna carta trovata per "${candidateTitle}".`, "err");
-      }
-      return;
-    }
-
-    const sig = `${cards[0].name}|${cards.length}`;
-    if (silentIfNoMatch && sig === lastMatchedSignature) {
-      return;
-    }
-    lastMatchedSignature = sig;
-
-    renderCardResultsList(cards);
-    setStatus($("collection-status"), `Riconosciuta: ${cards[0].name} (${cards.length} stampe). Scegli + Norm o + Foil.`, "ok");
-  } catch (err) {
-    if (!silentIfNoMatch) {
-      setStatus($("collection-status"), `Errore scansione: ${err.message}`, "err");
-    }
+  } catch {
+    // ignora frame non leggibili durante lo scan continuo
   } finally {
     isScanningFrame = false;
   }
 }
 
-$("btn-run-ocr")?.addEventListener("click", () => {
-  lastMatchedSignature = "";
-  runCardScan({ silentIfNoMatch: false });
-});
+// Ripristina eventuale sessione già attiva
+(async () => {
+  const { data } = await sb.auth.getSession();
+  if (data?.session?.user) {
+    currentUser = data.session.user;
+    onAuthenticated();
+  }
+})();

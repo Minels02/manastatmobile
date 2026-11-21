@@ -110,69 +110,56 @@
         </div>
       </section>
 
-      <!-- TAB 3: COLLEZIONE (RICERCA SCRYFALL + AUTO-SCANNER CARTA) -->
+      <!-- TAB 3: SCANNER COLLEZIONE (TELECAMERA + PROPOSTA SÌ / NO) -->
       <section id="tab-collection" class="tab-panel">
-        <div class="card">
-          <h2>Aggiungi carta alla collezione</h2>
-          <div class="row-search">
-            <input id="card-search-input" type="text" placeholder="Nome carta (es. Sol Ring)..." />
-            <button id="btn-search-card" class="btn">Cerca</button>
-          </div>
-        </div>
-
-        <div class="card">
-          <h3>Auto-Scanner carta</h3>
-          <p class="muted">Inquadra la carta con il riquadro giallo (titolo/carta intera): quando la riconosce cerca automaticamente su Scryfall.</p>
-
-          <div class="row-2">
-            <button id="btn-open-camera" type="button" class="btn">📷 Avvia auto-scan</button>
-            <button id="btn-toggle-autoscan" type="button" class="btn">⏸️ Pausa auto</button>
-          </div>
-
-          <div class="row-2">
-            <label class="btn file-btn" for="scan-file-input">🖼️ Carica foto</label>
-            <input id="scan-file-input" type="file" accept="image/*" capture="environment" class="hidden" />
-            <button id="btn-run-ocr" type="button" class="btn">🔍 Scansiona ora</button>
-          </div>
-
-          <div id="scanner-stage" class="scanner-stage hidden">
-            <video id="scan-video" autoplay playsinline muted class="hidden"></video>
-            <img id="scan-preview-img" alt="Anteprima carta" class="hidden" />
-            <div id="scan-roi-box" class="scan-roi-box" title="Zona scansione carta">
-              <span>AUTO SCAN</span>
+        <div class="scanner-full-view">
+          <div class="camera-viewport">
+            <video id="scan-video" autoplay playsinline muted></video>
+            <div id="camera-placeholder" class="camera-placeholder">
+              <p class="muted">Fotocamera in avvio o non attiva.</p>
+              <button id="btn-start-camera" type="button" class="btn primary">Attiva fotocamera</button>
+            </div>
+            <div class="camera-hud">
+              <span id="scan-state-badge" class="scan-badge">In attesa di carta...</span>
+              <span id="rejected-count-badge" class="scan-badge secondary">Scartate: 0</span>
             </div>
           </div>
 
-          <div id="roi-controls" class="roi-controls hidden">
-            <label>Sinistra → destra: <span id="roi-x-val">6%</span></label>
-            <input id="roi-x" type="range" min="0" max="50" value="6" />
-
-            <label>Dall'alto: <span id="roi-y-val">6%</span></label>
-            <input id="roi-y" type="range" min="0" max="75" value="6" />
-
-            <label>Larghezza: <span id="roi-w-val">88%</span></label>
-            <input id="roi-w" type="range" min="35" max="96" value="88" />
-
-            <label>Altezza: <span id="roi-h-val">22%</span></label>
-            <input id="roi-h" type="range" min="10" max="85" value="22" />
+          <div class="camera-footer-bar">
+            <div class="row-2 compact-row">
+              <select id="scan-finish-select">
+                <option value="normal">Normale</option>
+                <option value="foil">Foil</option>
+              </select>
+              <button id="btn-reset-rejected" type="button" class="btn small">Reset scartate</button>
+            </div>
+            <p id="collection-status" class="status"></p>
           </div>
 
-          <p id="scan-ocr-readout" class="muted"></p>
-          <canvas id="scan-crop-canvas" class="hidden"></canvas>
+          <!-- CARD PROPOSTA QUANDO VIENE RICONOSCIUTA UNA CARTA -->
+          <div id="proposal-modal" class="proposal-overlay hidden">
+            <div class="proposal-card">
+              <p class="muted">Carta rilevata. Aggiungere alla collezione?</p>
+              <img id="proposal-img" src="" alt="Anteprima carta" class="proposal-img hidden" />
+              <h2 id="proposal-name">Nome carta</h2>
+              <p id="proposal-meta" class="muted"></p>
+
+              <div class="proposal-actions">
+                <button id="btn-proposal-no" type="button" class="btn danger-btn">No</button>
+                <button id="btn-proposal-yes" type="button" class="btn success-btn">Sì</button>
+              </div>
+            </div>
+          </div>
         </div>
 
-        <div class="card">
-          <h3>Risultati</h3>
-          <div id="card-results" class="results-list"></div>
-          <p id="collection-status" class="status"></p>
-        </div>
+        <canvas id="scan-crop-canvas" class="hidden"></canvas>
       </section>
 
       <!-- NAVIGAZIONE IN BASSO -->
       <nav class="bottom-nav">
         <button class="nav-btn active" data-tab="tab-decks">Mazzi</button>
         <button class="nav-btn" data-tab="tab-groups">Gruppi</button>
-        <button class="nav-btn" data-tab="tab-collection">Collezione</button>
+        <button class="nav-btn" data-tab="tab-collection">Scanner</button>
       </nav>
     </main>
   </div>
