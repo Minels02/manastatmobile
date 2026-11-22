@@ -19,7 +19,7 @@ const DEFAULT_SCANNER_WS_URL = "wss://manastat-scanner-server.onrender.com/ws/sc
 const STORAGE_SETS_KEY = "manastat_scanner_selected_sets";
 
 // Badge versione sempre visibile sopra la barra di navigazione
-const APP_UI_VERSION = "v2.4";
+const APP_UI_VERSION = "v2.5";
 let connectedServerVersion = "";
 
 function renderVersionBadge() {
@@ -289,6 +289,9 @@ document.querySelectorAll(".nav-btn").forEach((btn) => {
     } else {
       document.body.classList.remove("scanner-mode");
       stopScannerSession();
+      if (targetTab === "tab-profile") {
+        await loadProfile();
+      }
     }
   });
 });
@@ -322,10 +325,7 @@ $("btn-logout")?.addEventListener("click", async () => {
 async function onAuthenticated() {
   $("login-view")?.classList.add("hidden");
   $("main-view")?.classList.remove("hidden");
-  if ($("user-badge")) {
-    $("user-badge").textContent = currentUser.email || "";
-  }
-  await Promise.all([loadDecks(), loadGroups()]);
+  await Promise.all([loadDecks(), loadGroups(), loadProfile()]);
 }
 
 function formatSortKey(deck) {
@@ -738,6 +738,181 @@ $("btn-save-group-match")?.addEventListener("click", async () => {
   setStatus($("group-status"), "Partita di gruppo salvata! La ritroverai nell'app desktop.", "ok");
 });
 
+// ---- PAGINA PROFILO ----
+async function loadProfile() {
+  if (!currentUser) return;
+  const uid = currentUser.id;
+  setStatus($("profile-status"), "");
+
+  // 1. Dati profilo (con fallback se alcune colonne social non esistono)
+  let profile = null;
+  const profRes = await sb
+    .from("profiles")
+    .select("id, nickname, bio, avatar_url, favorite_cards, created_at")
+    .eq("id", uid)
+    .maybeSingle();
+
+  if (profRes.error) {
+    const fallbackRes = await sb
+      .from("profiles")
+      .select("id, nickname, created_at")
+      .eq("id", uid)
+      .maybeSingle();
+    profile = fallbackRes.data || {};
+  } else {
+    profile = profRes.data || {};
+  }
+
+  // 2. Mazzi, storico partite, partite gruppi e amici in parallelo
+  const [decksRes, mpRes, friendsRes] = await Promise.all([
+    sb.from("decks").select("id, name, type, format").eq("owner_id", uid),
+    sb.from("match_players").select("is_winner").eq("user_id", uid),
+    sb
+      .from("friendships")
+      .select("id, requester_id, addressee_id, status")
+      .or(`requester_id.eq.${uid},addressee_id.eq.${uid}`),
+  ]);
+
+  const decks = decksRes.data || [];
+  const deckIds = decks.map((d) => d.id).filter(Boolean);
+
+  let histRows = [];
+  if (deckIds.length) {
+    const hRes = await sb
+      .from("deck_history")
+      .select("deck_id, match, win")
+      .in("deck_id", deckIds);
+    histRows = hRes.data || [];
+  }
+
+  // Calcolo statistiche come nell'app desktop
+  const byDeck = {};
+  let personalMatches = 0;
+  let personalWins = 0;
+  for (const r of histRows) {
+    const m = Math.max(0, parseInt(r.match || 0, 10));
+    const w = Math.max(0, Math.min(parseInt(r.win || 0, 10), m));
+    personalMatches += m;
+    personalWins += w;
+    if (r.deck_id) {
+      if (!byDeck[r.deck_id]) byDeck[r.deck_id] = [0, 0];
+      byDeck[r.deck_id][0] += m;
+      byDeck[r.deck_id][1] += w;
+    }
+  }
+
+  let groupMatches = 0;
+  let groupWins = 0;
+  for (const r of mpRes.data || []) {
+    groupMatches += 1;
+    if (r.is_winner) groupWins += 1;
+  }
+
+  const totalMatches = personalMatches + groupMatches;
+  const totalWins = personalWins + groupWins;
+  const globalWr = totalMatches > 0 ? (totalWins / totalMatches) * 100 : 0;
+
+  let favDeckName = "Nessuno";
+  let favDeckSub = "0 partite";
+  if (decks.length) {
+    const bestDeck = decks.reduce((best, d) => {
+      const [bm, bw] = byDeck[best.id] || [0, 0];
+      const [dm, dw] = byDeck[d.id] || [0, 0];
+      if (dm !== bm) return dm > bm ? d : best;
+      return dw > bw ? d : best;
+    }, decks[0]);
+    const [bm, bw] = byDeck[bestDeck.id] || [0, 0];
+    favDeckName = bestDeck.name || "Mazzo";
+    if (bm > 0) {
+      favDeckSub = `${bm} partite · ${((bw / bm) * 100).toFixed(1)}% WR`;
+    } else {
+      favDeckSub = (bestDeck.format || bestDeck.type || "Mazzo principale").trim();
+    }
+  }
+
+  const friendRows = friendsRes.error ? [] : (friendsRes.data || []);
+  const friendsCount = friendRows.filter((f) => f.status === "accepted").length;
+  const pendingIncoming = friendRows.filter(
+    (f) => f.status === "pending" && f.addressee_id === uid
+  ).length;
+
+  // Rendering intestazione
+  const nickname = (profile.nickname || "").trim() || (currentUser.email || "Giocatore").split("@")[0];
+  $("profile-nickname").textContent = nickname;
+  $("profile-email").textContent = currentUser.email || "";
+
+  if (profile.created_at) {
+    const dt = new Date(profile.created_at);
+    if (!Number.isNaN(dt.getTime())) {
+      $("profile-since").textContent = `Membro dal ${dt.toLocaleDateString("it-IT")}`;
+    }
+  } else {
+    $("profile-since").textContent = "";
+  }
+
+  const avatarEl = $("profile-avatar");
+  const avatarUrl = (profile.avatar_url || "").trim();
+  if (avatarUrl) {
+    avatarEl.innerHTML = `<img src="${escapeHtml(avatarUrl)}" alt="Foto profilo" />`;
+  } else {
+    avatarEl.textContent = nickname.slice(0, 1).toUpperCase();
+  }
+
+  const bio = (profile.bio || "").trim();
+  $("profile-bio").textContent = bio || "Nessuna bio impostata.";
+
+  // Rendering KPI
+  $("kpi-winrate").textContent = totalMatches > 0 ? `${globalWr.toFixed(1)}%` : "—";
+  $("kpi-winrate-sub").textContent = `${totalWins}V / ${totalMatches}P`;
+
+  $("kpi-matches").textContent = String(totalMatches);
+  $("kpi-matches-sub").textContent = `${personalMatches} pers. · ${groupMatches} gruppi`;
+
+  $("kpi-decks").textContent = String(decks.length);
+  $("kpi-decks-sub").textContent = decks.length === 1 ? "Mazzo personale" : "Mazzi personali";
+
+  $("kpi-friends").textContent = String(friendsCount);
+  $("kpi-friends-sub").textContent =
+    pendingIncoming > 0 ? `${pendingIncoming} richieste in attesa` : "Connessi";
+
+  $("profile-fav-deck-name").textContent = favDeckName;
+  $("profile-fav-deck-sub").textContent = favDeckSub;
+
+  // Rendering Vetrina Carte Preferite
+  const flexGrid = $("profile-flex-grid");
+  const favCards = Array.isArray(profile.favorite_cards)
+    ? profile.favorite_cards.filter((c) => c && (c.name || c.image_url))
+    : [];
+
+  if (!favCards.length) {
+    flexGrid.innerHTML = `<p class="muted" style="grid-column:1 / -1;margin:4px 0;">Nessuna carta in vetrina (puoi aggiungerle dall'app desktop).</p>`;
+  } else {
+    flexGrid.innerHTML = favCards
+      .slice(0, 4)
+      .map((c) => {
+        const img = c.image_url || c.card_image_url || "";
+        const isFoil = Boolean(c.foil);
+        const setInfo = [
+          (c.set_code || c.set || "").toUpperCase(),
+          c.collector_number ? `#${c.collector_number}` : "",
+        ]
+          .filter(Boolean)
+          .join(" ");
+        return `
+          <div class="flex-card-slot ${isFoil ? "is-foil" : ""}">
+            <div class="flex-card-img-wrap">
+              ${isFoil ? `<span class="flex-foil-badge">✨ Foil</span>` : ""}
+              ${img ? `<img src="${escapeHtml(img)}" alt="${escapeHtml(c.name || "Carta")}" loading="lazy" />` : ""}
+            </div>
+            <div class="flex-card-name">${escapeHtml(c.name || "Carta")}</div>
+            ${setInfo ? `<div class="flex-card-set">${escapeHtml(setInfo)}</div>` : ""}
+          </div>
+        `;
+      })
+      .join("");
+  }
+}
+
 // ---- SALVATAGGIO CARTA IN COLLEZIONE ----
 async function saveCardPayloadToCollection(cardPayload, isFoil) {
   const rowToInsert = {
@@ -998,7 +1173,6 @@ function connectScannerWs() {
     awaitingServerReply = false;
     if (pendingProposalCard) return;
 
-    // Breve pausa dopo la conferma per darti il tempo di iniziare a cambiare carta
     if (Date.now() < scanPauseUntil) {
       if (payload && payload.detected) {
         drawQuadOverlay(payload.quad, true);
@@ -1028,7 +1202,6 @@ function connectScannerWs() {
 
     const matches = Array.isArray(payload.matches) ? payload.matches : [];
 
-    // Blocco anti-doppione finché la stessa carta resta davanti alla fotocamera
     if (lockedAfterConfirmCard) {
       const stillSameCard = matches.some((m) => {
         const idKey = String(m.scryfall_id || "").toLowerCase();
@@ -1046,7 +1219,6 @@ function connectScannerWs() {
         return;
       }
 
-      // Richiede almeno 3 frame consecutivi senza la carta confermata prima di sbloccare
       unlockFramesCounter += 1;
       if (unlockFramesCounter < 3) {
         drawQuadOverlay(payload.quad, false);
@@ -1186,7 +1358,6 @@ $("btn-proposal-yes")?.addEventListener("click", async () => {
   };
   const isFoil = $("scan-finish-select")?.value === "foil";
 
-  // Reset immediato delle carte scartate per la scansione successiva
   rejectedCardKeys.clear();
   updateRejectedBadge();
 
