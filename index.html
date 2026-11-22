@@ -11,7 +11,6 @@
   <link rel="manifest" href="manifest.json" />
   <link rel="stylesheet" href="style.css" />
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 </head>
 <body>
   <div id="app">
@@ -110,17 +109,12 @@
         </div>
       </section>
 
-      <!-- TAB 3: SCANNER PRO (MIRINO MTG + DHASH + BLOCCO SET) -->
+      <!-- TAB 3: SCANNER LIVE VIA SERVER PYTHON -->
       <section id="tab-collection" class="tab-panel">
         <div class="scanner-full-view">
           <div class="camera-viewport">
             <video id="scan-video" autoplay playsinline muted></video>
-
-            <!-- MIRINO PROPORZIONI CARTA MAGIC -->
-            <div id="card-reticle" class="card-reticle">
-              <div class="reticle-title-zone"><span>TITOLO</span></div>
-              <div class="reticle-art-zone"><span>ARTWORK</span></div>
-            </div>
+            <canvas id="quad-overlay" class="quad-overlay"></canvas>
 
             <div id="camera-placeholder" class="camera-placeholder">
               <p class="muted">Fotocamera non attiva.</p>
@@ -128,24 +122,29 @@
             </div>
 
             <div class="camera-hud">
-              <span id="scan-state-badge" class="scan-badge">Allinea la carta nel riquadro</span>
+              <span id="scan-state-badge" class="scan-badge">In attesa...</span>
               <span id="rejected-count-badge" class="scan-badge secondary">Scartate: 0</span>
             </div>
+          </div>
 
-            <!-- PULSANTE SCATTO MANUALE RAPIDO -->
-            <button id="btn-manual-snap" type="button" class="shutter-btn" title="Scansiona subito">
-              <span class="shutter-inner"></span>
-            </button>
+          <div class="scanner-connection-bar">
+            <label for="scannerWsUrlInput">Server Scanner (WS / WSS)</label>
+            <input
+              id="scannerWsUrlInput"
+              type="text"
+              placeholder="ws://localhost:8000/ws/scan oppure wss://.../ws/scan"
+            />
+            <span id="scannerStatusBadge" class="status-badge disconnected">Disconnesso</span>
+            <button id="btnToggleScanner" type="button" class="btn small">Avvia Scanner</button>
           </div>
 
           <div class="camera-footer-bar">
             <div class="scanner-controls-grid">
-              <input id="lock-set-input" type="text" maxlength="6" placeholder="Blocca Set (es. MH3)" />
               <select id="scan-finish-select">
                 <option value="normal">Normale</option>
                 <option value="foil">Foil</option>
               </select>
-              <button id="btn-reset-rejected" type="button" class="btn small">Reset</button>
+              <button id="btn-reset-rejected" type="button" class="btn small">Reset scartate</button>
             </div>
             <p id="collection-status" class="status"></p>
           </div>
@@ -160,7 +159,7 @@
 
               <label for="proposal-edition-select">Edizione</label>
               <select id="proposal-edition-select">
-                <option value="">Caricamento edizioni...</option>
+                <option value="">Nessuna edizione alternativa</option>
               </select>
 
               <div class="proposal-actions">
@@ -171,7 +170,7 @@
           </div>
         </div>
 
-        <canvas id="scan-crop-canvas" class="hidden"></canvas>
+        <canvas id="frame-send-canvas" class="hidden"></canvas>
       </section>
 
       <!-- NAVIGAZIONE IN BASSO -->
