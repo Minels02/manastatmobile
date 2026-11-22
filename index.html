@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>ManaStat Companion</title>
   <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="style.css?v=5" />
+  <link rel="stylesheet" href="style.css?v=7" />
 </head>
 <body>
   <div id="app">
@@ -181,16 +181,69 @@
         <canvas id="frame-send-canvas" class="hidden"></canvas>
       </section>
 
+      <!-- TAB 4: PROFILO GIOCATORE -->
+      <section id="tab-profile" class="tab-panel">
+        <div class="card profile-hero-card">
+          <div class="profile-header">
+            <div id="profile-avatar" class="profile-avatar">?</div>
+            <div class="profile-identity">
+              <h2 id="profile-nickname">Giocatore</h2>
+              <div id="profile-email" class="muted"></div>
+              <div id="profile-since" class="profile-since"></div>
+            </div>
+          </div>
+          <p id="profile-bio" class="profile-bio">Caricamento profilo...</p>
+          <p id="profile-status" class="status"></p>
+        </div>
+
+        <div class="profile-kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-label">Winrate Globale</div>
+            <div id="kpi-winrate" class="kpi-value">—</div>
+            <div id="kpi-winrate-sub" class="kpi-sub">0V / 0P</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Partite Totali</div>
+            <div id="kpi-matches" class="kpi-value">0</div>
+            <div id="kpi-matches-sub" class="kpi-sub">0 pers. · 0 gruppi</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Mazzi</div>
+            <div id="kpi-decks" class="kpi-value">0</div>
+            <div id="kpi-decks-sub" class="kpi-sub">Personali</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Amici</div>
+            <div id="kpi-friends" class="kpi-value">0</div>
+            <div id="kpi-friends-sub" class="kpi-sub">Connessi</div>
+          </div>
+        </div>
+
+        <div class="card profile-fav-deck-card">
+          <div class="kpi-label">Mazzo Preferito</div>
+          <div id="profile-fav-deck-name" class="profile-fav-deck-name">Nessuno</div>
+          <div id="profile-fav-deck-sub" class="muted">0 partite</div>
+        </div>
+
+        <div class="card">
+          <h3>Vetrina Carte Preferite</h3>
+          <div id="profile-flex-grid" class="profile-flex-grid"></div>
+        </div>
+
+        <button id="btn-logout" type="button" class="btn profile-logout-btn">Esci dall'account</button>
+      </section>
+
       <!-- NAVIGAZIONE IN BASSO -->
       <nav class="bottom-nav">
         <button class="nav-btn active" data-tab="tab-decks">Mazzi</button>
         <button class="nav-btn" data-tab="tab-groups">Gruppi</button>
         <button class="nav-btn" data-tab="tab-collection">Scanner</button>
+        <button class="nav-btn" data-tab="tab-profile">Profilo</button>
       </nav>
     </main>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="app.js?v=6"></script>
+  <script src="app.js?v=7"></script>
 </body>
 </html>
