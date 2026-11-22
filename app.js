@@ -75,16 +75,8 @@ function normalizeWsUrl(url) {
   return clean;
 }
 
-function getDefaultWsUrl() {
-  const saved = localStorage.getItem(STORAGE_KEY_WS_URL);
-  if (saved) return normalizeWsUrl(saved);
-  return DEFAULT_SCANNER_WS_URL;
-}
-
 function getScannerWsUrl() {
-  const inputEl = $("scannerWsUrlInput");
-  const raw = (inputEl && inputEl.value.trim()) || getDefaultWsUrl();
-  return normalizeWsUrl(raw);
+  return DEFAULT_SCANNER_WS_URL;
 }
 
 function setScannerConnectionUi(label, stateClass, isRunning) {
