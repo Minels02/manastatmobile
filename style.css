@@ -690,7 +690,7 @@ input[type="radio"] {
   height: calc(var(--nav-height) + env(safe-area-inset-bottom, 0px));
   padding: 6px 6px calc(6px + env(safe-area-inset-bottom, 0px));
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   background: #171b26;
   border-top: 1px solid var(--border);
   z-index: 30;
@@ -709,4 +709,203 @@ input[type="radio"] {
 .nav-btn.active {
   color: var(--text);
   border-bottom: 2px solid var(--accent);
+}
+
+
+/* ---- SCHEDA PROFILO ---- */
+.profile-hero-card {
+  padding: 16px;
+}
+
+.profile-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.profile-avatar {
+  width: 68px;
+  height: 68px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #2563eb, #1e293b);
+  border: 2px solid rgba(96, 165, 250, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: #ffffff;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.profile-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.profile-identity {
+  min-width: 0;
+  flex: 1;
+}
+
+.profile-identity h2 {
+  margin: 0 0 3px 0;
+  font-size: 1.2rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-since {
+  font-size: 0.76rem;
+  color: #64748b;
+  margin-top: 3px;
+}
+
+.profile-bio {
+  margin: 12px 0 0 0;
+  padding-top: 10px;
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+  font-size: 0.9rem;
+  line-height: 1.4;
+  color: #cbd5e1;
+  white-space: pre-wrap;
+}
+
+.profile-kpi-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.kpi-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.kpi-label {
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.kpi-value {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.kpi-sub {
+  font-size: 0.78rem;
+  color: #93c5fd;
+  margin-top: 2px;
+}
+
+.profile-fav-deck-card {
+  padding: 12px 14px;
+}
+
+.profile-fav-deck-name {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #ffffff;
+  margin-bottom: 2px;
+}
+
+.profile-flex-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.flex-card-slot {
+  position: relative;
+  background: #121620;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px;
+  text-align: center;
+  overflow: hidden;
+}
+
+.flex-card-img-wrap {
+  position: relative;
+  border-radius: 8px;
+  overflow: hidden;
+  aspect-ratio: 63 / 88;
+  background: #0d1017;
+}
+
+.flex-card-img-wrap img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.flex-card-slot.is-foil {
+  border-color: rgba(250, 204, 21, 0.55);
+}
+
+.flex-card-slot.is-foil .flex-card-img-wrap::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    125deg,
+    rgba(255, 0, 128, 0.18) 0%,
+    rgba(255, 215, 0, 0.16) 28%,
+    rgba(0, 255, 200, 0.16) 55%,
+    rgba(80, 140, 255, 0.2) 82%,
+    rgba(255, 255, 255, 0.25) 100%
+  );
+  mix-blend-mode: screen;
+}
+
+.flex-foil-badge {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  z-index: 2;
+  background: rgba(15, 23, 42, 0.85);
+  color: #fde047;
+  border: 1px solid rgba(250, 204, 21, 0.5);
+  border-radius: 999px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.flex-card-name {
+  margin-top: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #eef2f8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flex-card-set {
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.profile-logout-btn {
+  width: 100%;
+  background: rgba(220, 38, 38, 0.15);
+  border-color: rgba(239, 68, 68, 0.45);
+  color: #fca5a5;
+  margin-top: 4px;
+  margin-bottom: 14px;
 }
