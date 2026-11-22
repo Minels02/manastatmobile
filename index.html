@@ -2,14 +2,14 @@
 <html lang="it">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#12151c" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>ManaStat Companion</title>
   <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=5" />
 </head>
 <body>
   <div id="app">
@@ -27,14 +27,6 @@
 
     <!-- APP PRINCIPALE -->
     <main id="main-view" class="hidden">
-      <header class="topbar">
-        <div>
-          <strong>ManaStat</strong>
-          <span id="user-badge" class="badge"></span>
-        </div>
-        <button id="btn-logout" class="btn small">Esci</button>
-      </header>
-
       <!-- TAB 1: MAZZI -->
       <section id="tab-decks" class="tab-panel active">
         <div id="decks-list-view" class="card">
@@ -96,7 +88,7 @@
 
           <div class="card">
             <h2 id="group-detail-title">Gruppo</h2>
-            <label>Partecipanti & Mazzi</label>
+            <label>Partecipanti &amp; Mazzi</label>
             <div id="group-players-container"></div>
 
             <label>Note (opzionali)</label>
@@ -108,7 +100,7 @@
         </div>
       </section>
 
-      <!-- TAB 3: SCANNER LIVE VIA SERVER PYTHON -->
+      <!-- TAB 3: SCANNER A TUTTO SCHERMO -->
       <section id="tab-collection" class="tab-panel">
         <div class="scanner-full-view">
           <div class="camera-viewport">
@@ -120,34 +112,55 @@
               <button id="btn-start-camera" type="button" class="btn primary">Attiva fotocamera</button>
             </div>
 
-            <div class="camera-hud">
-              <span id="scan-state-badge" class="scan-badge">In attesa...</span>
-              <span id="rejected-count-badge" class="scan-badge secondary">Scartate: 0</span>
-            </div>
-          </div>
+            <!-- OVERLAY SUPERIORE: FILTRO ESPANSIONI + STATO -->
+            <div class="scanner-top-overlay">
+              <div id="scanner-sets-box" class="scanner-sets-box">
+                <div class="scanner-sets-header">
+                  <button type="button" id="btn-toggle-sets-panel" class="scanner-sets-toggle">
+                    <span class="sets-label">🎯 Espansioni:</span>
+                    <span id="scanner-sets-summary" class="sets-summary">Tutte</span>
+                    <span class="sets-caret">▾</span>
+                  </button>
+                  <button type="button" id="btn-clear-scanner-sets" class="scanner-sets-clear">Tutte</button>
+                </div>
 
-          <div class="scanner-connection-bar">
-            <label for="scannerWsUrlInput">Server Scanner (WS / WSS)</label>
-           
-            <span id="scannerStatusBadge" class="status-badge disconnected">Disconnesso</span>
-            <button id="btnToggleScanner" type="button" class="btn small">Avvia Scanner</button>
-          </div>
+                <div id="scanner-sets-panel" class="scanner-sets-panel hidden">
+                  <input
+                    id="scanner-sets-search"
+                    type="text"
+                    class="scanner-sets-search"
+                    placeholder="Cerca espansione o codice (es. MH3, BLB, LTR)..."
+                  />
+                  <div id="scanner-sets-list" class="scanner-sets-list"></div>
+                </div>
+              </div>
 
-          <div class="camera-footer-bar">
-            <div class="scanner-controls-grid">
-              <select id="scan-finish-select">
-                <option value="normal">Normale</option>
-                <option value="foil">Foil</option>
-              </select>
-              <button id="btn-reset-rejected" type="button" class="btn small">Reset scartate</button>
+              <div class="camera-hud">
+                <span id="scan-state-badge" class="scan-badge">In attesa...</span>
+                <div class="camera-hud-right">
+                  <span id="rejected-count-badge" class="scan-badge secondary">Scartate: 0</span>
+                  <span id="scannerStatusBadge" class="status-badge disconnected">Offline</span>
+                </div>
+              </div>
             </div>
-            <p id="collection-status" class="status"></p>
+
+            <!-- OVERLAY INFERIORE: CONTROLLI RAPIDI SOPRA LA CAMERA -->
+            <div class="scanner-bottom-overlay">
+              <p id="collection-status" class="scanner-toast"></p>
+              <div class="scanner-bottom-controls">
+                <select id="scan-finish-select" class="overlay-select">
+                  <option value="normal">Normale</option>
+                  <option value="foil">Foil</option>
+                </select>
+                <button id="btn-reset-rejected" type="button" class="overlay-btn">Reset scartate</button>
+                <button id="btnToggleScanner" type="button" class="overlay-btn accent">Avvia</button>
+              </div>
+            </div>
           </div>
 
           <!-- CARD PROPOSTA QUANDO VIENE RICONOSCIUTA UNA CARTA -->
           <div id="proposal-modal" class="proposal-overlay hidden">
             <div class="proposal-card">
-              <p id="proposal-match-source" class="muted">Carta rilevata</p>
               <img id="proposal-img" src="" alt="Anteprima carta" class="proposal-img hidden" />
               <h2 id="proposal-name">Nome carta</h2>
               <p id="proposal-meta" class="muted"></p>
@@ -178,6 +191,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="app.js?v=4"></script>
+  <script src="app.js?v=5"></script>
 </body>
 </html>
