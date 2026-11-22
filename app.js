@@ -1935,6 +1935,12 @@ return;
 
 }
 
+if (payload && payload.type === "hello") {
+  connectedServerVersion = payload.server_version || "";
+  renderVersionBadge();
+  return;
+}
+
 
 
 awaitingServerReply = false;
