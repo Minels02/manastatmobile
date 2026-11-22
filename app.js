@@ -36,6 +36,25 @@ const DEFAULT_SCANNER_WS_URL = "wss://manastat-scanner-server.onrender.com/ws/sc
 
 const STORAGE_SETS_KEY = "manastat_scanner_selected_sets";
 
+const APP_UI_VERSION = "v2.1";
+let connectedServerVersion = "";
+
+function renderVersionBadge() {
+  let badge = document.getElementById("manastat-version-badge");
+  if (!badge) {
+    badge = document.createElement("div");
+    badge.id = "manastat-version-badge";
+    badge.style.cssText =
+      "position:fixed;bottom:6px;right:8px;z-index:9999;pointer-events:none;" +
+      "background:rgba(15,23,42,0.78);color:#94a3b8;border:1px solid rgba(148,163,184,0.25);" +
+      "border-radius:6px;padding:2px 6px;font-size:10px;font-family:monospace;";
+    document.body.appendChild(badge);
+  }
+  badge.textContent = connectedServerVersion
+    ? `UI ${APP_UI_VERSION} · SRV ${connectedServerVersion}`
+    : `UI ${APP_UI_VERSION}`;
+}
+renderVersionBadge();
 
 
 let cameraStream = null;
