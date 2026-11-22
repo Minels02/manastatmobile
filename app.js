@@ -14,16 +14,18 @@ let groupDecks = [];
 const artworkCache = new Map();
 
 // Configurazione WebSocket dello scanner Python
-const DEFAULT_SCANNER_WS_URL = "ws://localhost:8000/ws/scan";
+const DEFAULT_SCANNER_WS_URL = "wss://manastat-scanner-server.onrender.com/ws/scan";
 const STORAGE_KEY_WS_URL = "manastat_scanner_ws_url";
 
 let cameraStream = null;
 let wsConn = null;
+let wsRetryTimer = null;
 let sendFrameTimer = null;
 let awaitingServerReply = false;
 let scannerActive = false;
 let pendingProposalCard = null;
 let proposalMatches = [];
+let lockedAfterConfirmCard = null;
 const rejectedCardKeys = new Set();
 
 const PREFERRED_FORMATS = [
@@ -76,9 +78,7 @@ function normalizeWsUrl(url) {
 function getDefaultWsUrl() {
   const saved = localStorage.getItem(STORAGE_KEY_WS_URL);
   if (saved) return normalizeWsUrl(saved);
-  const host = window.location.hostname || "localhost";
-  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return normalizeWsUrl(`${proto}//${host}:8000/ws/scan`);
+  return DEFAULT_SCANNER_WS_URL;
 }
 
 function getScannerWsUrl() {
@@ -688,11 +688,17 @@ function stopFrameLoop() {
 }
 
 function stopScannerSession() {
+  if (wsRetryTimer) {
+    clearTimeout(wsRetryTimer);
+    wsRetryTimer = null;
+  }
   stopFrameLoop();
   clearQuadOverlay();
+  lockedAfterConfirmCard = null;
   if (wsConn) {
     try {
       wsConn.onclose = null;
+      wsConn.onerror = null;
       wsConn.close();
     } catch {
       // ignora
@@ -753,6 +759,11 @@ function startFrameLoop() {
 }
 
 function connectScannerWs() {
+  if (wsRetryTimer) {
+    clearTimeout(wsRetryTimer);
+    wsRetryTimer = null;
+  }
+
   const url = getScannerWsUrl();
   if ($("scannerWsUrlInput")) {
     $("scannerWsUrlInput").value = url;
@@ -762,6 +773,7 @@ function connectScannerWs() {
   if (wsConn) {
     try {
       wsConn.onclose = null;
+      wsConn.onerror = null;
       wsConn.close();
     } catch {
       // ignora
@@ -776,9 +788,13 @@ function connectScannerWs() {
   wsConn = socket;
 
   socket.onopen = () => {
+    if (wsRetryTimer) {
+      clearTimeout(wsRetryTimer);
+      wsRetryTimer = null;
+    }
     setScanStateBadge("Inquadra una carta");
     setScannerConnectionUi("Connesso", "connected", true);
-    setStatus($("collection-status"), `Connesso a ${url}`, "ok");
+    setStatus($("collection-status"), "Connesso al server scanner!", "ok");
     startFrameLoop();
   };
 
@@ -795,11 +811,37 @@ function connectScannerWs() {
 
     if (!payload || !payload.detected) {
       drawQuadOverlay(null, false);
+      // Appena la carta viene tolta dall'inquadratura, sblocca per la prossima
+      if (lockedAfterConfirmCard) {
+        lockedAfterConfirmCard = null;
+      }
       setScanStateBadge("Cerca bordo carta...");
       return;
     }
 
     const matches = Array.isArray(payload.matches) ? payload.matches : [];
+
+    // Se è bloccato sull'ultima carta confermata, controlla se l'utente ha cambiato carta
+    if (lockedAfterConfirmCard) {
+      const stillSameCard = matches.some((m) => {
+        const idKey = String(m.scryfall_id || "").toLowerCase();
+        const nameKey = String(m.name || "").toLowerCase();
+        return (
+          (lockedAfterConfirmCard.idKey && idKey === lockedAfterConfirmCard.idKey) ||
+          (lockedAfterConfirmCard.nameKey && nameKey === lockedAfterConfirmCard.nameKey)
+        );
+      });
+
+      if (stillSameCard) {
+        drawQuadOverlay(payload.quad, true);
+        setScanStateBadge("Cambia carta per proseguire");
+        return;
+      }
+
+      // Ha inquadrato una carta diversa: sblocca automaticamente
+      lockedAfterConfirmCard = null;
+    }
+
     const filtered = matches.filter((m) => {
       const idKey = String(m.scryfall_id || "").toLowerCase();
       const nameKey = String(m.name || "").toLowerCase();
@@ -817,18 +859,28 @@ function connectScannerWs() {
 
   socket.onerror = () => {
     awaitingServerReply = false;
-    setScanStateBadge("Errore server");
-    setScannerConnectionUi("Errore connessione", "error", false);
-    setStatus($("collection-status"), "Impossibile raggiungere il server scanner.", "err");
   };
 
   socket.onclose = () => {
     awaitingServerReply = false;
     stopFrameLoop();
     clearQuadOverlay();
-    setScannerConnectionUi("Disconnesso", "disconnected", false);
-    if ($("tab-collection")?.classList.contains("active") && !pendingProposalCard) {
-      setScanStateBadge("Server disconnesso");
+
+    const isCollectionActive = $("tab-collection")?.classList.contains("active");
+    if (isCollectionActive && cameraStream) {
+      setScanStateBadge("Risveglio server (~25s)...");
+      setScannerConnectionUi("Risveglio server...", "connecting", true);
+      setStatus($("collection-status"), "Il server si sta avviando, nuovo tentativo tra 4s...", "");
+      wsRetryTimer = setTimeout(() => {
+        if ($("tab-collection")?.classList.contains("active") && cameraStream) {
+          connectScannerWs();
+        }
+      }, 4000);
+    } else {
+      setScannerConnectionUi("Disconnesso", "disconnected", false);
+      if (isCollectionActive && !pendingProposalCard) {
+        setScanStateBadge("Server disconnesso");
+      }
     }
   };
 }
@@ -914,19 +966,27 @@ $("btn-proposal-no")?.addEventListener("click", () => {
 $("btn-proposal-yes")?.addEventListener("click", async () => {
   if (!pendingProposalCard) return;
   const c = pendingProposalCard.payload;
+  const confirmedLock = {
+    idKey: String(c.scryfall_id || "").toLowerCase(),
+    nameKey: String(c.name || "").toLowerCase(),
+  };
   const isFoil = $("scan-finish-select")?.value === "foil";
 
   try {
     setStatus($("collection-status"), `Salvataggio ${c.name} [${c.set_code}]...`);
     await saveCardPayloadToCollection(c, isFoil);
 
+    lockedAfterConfirmCard = confirmedLock;
     rejectedCardKeys.clear();
     updateRejectedBadge();
-    setStatus($("collection-status"), `${c.name} [${c.set_code}] aggiunta! Scartate azzerate.`, "ok");
+    setStatus($("collection-status"), `${c.name} [${c.set_code}] aggiunta! Cambia carta per scansionare la prossima.`, "ok");
   } catch (err) {
     setStatus($("collection-status"), `Errore salvataggio: ${err.message}`, "err");
   } finally {
     hideCardProposalAndResume();
+    if (lockedAfterConfirmCard) {
+      setScanStateBadge("Cambia carta per proseguire");
+    }
   }
 });
 
