@@ -19,7 +19,7 @@ const DEFAULT_SCANNER_WS_URL = "wss://manastat-scanner-server.onrender.com/ws/sc
 const STORAGE_SETS_KEY = "manastat_scanner_selected_sets";
 
 // Badge versione sempre visibile sopra la barra di navigazione
-const APP_UI_VERSION = "v2.3";
+const APP_UI_VERSION = "v2.4";
 let connectedServerVersion = "";
 
 function renderVersionBadge() {
@@ -740,6 +740,27 @@ $("btn-save-group-match")?.addEventListener("click", async () => {
 
 // ---- SALVATAGGIO CARTA IN COLLEZIONE ----
 async function saveCardPayloadToCollection(cardPayload, isFoil) {
+  const rowToInsert = {
+    user_id: currentUser.id,
+    scryfall_id: cardPayload.scryfall_id,
+    name: cardPayload.name || "",
+    set_code: (cardPayload.set_code || "").toUpperCase(),
+    set_name: cardPayload.set_name || "",
+    collector_number: cardPayload.collector_number || "",
+    released_at: cardPayload.released_at || "",
+    rarity: cardPayload.rarity || "",
+    type_line: cardPayload.type_line || "",
+    mana_cost: cardPayload.mana_cost || "",
+    cmc: cardPayload.cmc ?? 0,
+    colors: Array.isArray(cardPayload.colors) ? cardPayload.colors : [],
+    image_url: cardPayload.image_url || "",
+    card_image_url: cardPayload.card_image_url || cardPayload.image_url || "",
+    price_eur: cardPayload.price_eur ?? null,
+    price_eur_foil: cardPayload.price_eur_foil ?? null,
+    foil: isFoil,
+    quantity: 1,
+  };
+
   const { error: checkErr } = await sb
     .from("user_collection")
     .select("id, quantity")
@@ -755,12 +776,7 @@ async function saveCardPayloadToCollection(cardPayload, isFoil) {
           .update({ quantity: (existing.quantity || 1) + 1 })
           .eq("id", existing.id);
       }
-      return sb.from("user_collection").insert({
-        user_id: currentUser.id,
-        ...cardPayload,
-        foil: isFoil,
-        quantity: 1,
-      });
+      return sb.from("user_collection").insert(rowToInsert);
     });
 
   if (checkErr) {
