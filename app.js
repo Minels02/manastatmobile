@@ -13,15 +13,15 @@ let groupMembers = [];
 let groupDecks = [];
 const artworkCache = new Map();
 
-// Configurazione WebSocket dello scanner Python
+// Configurazione WebSocket dello scanner Python (Render)
 const DEFAULT_SCANNER_WS_URL = "wss://manastat-scanner-server.onrender.com/ws/scan";
-const STORAGE_KEY_WS_URL = "manastat_scanner_ws_url";
 
 let cameraStream = null;
 let wsConn = null;
 let wsRetryTimer = null;
 let sendFrameTimer = null;
 let awaitingServerReply = false;
+let lastFrameSentAt = 0;
 let scannerActive = false;
 let pendingProposalCard = null;
 let proposalMatches = [];
@@ -55,24 +55,8 @@ function escapeHtml(str) {
     .replaceAll('"', "&quot;");
 }
 
-$("deck-date").value = new Date().toISOString().slice(0, 10);
-
-function normalizeWsUrl(url) {
-  let clean = String(url || "").trim().replace(/\/+$/, "");
-  if (!clean) return DEFAULT_SCANNER_WS_URL;
-
-  if (clean.startsWith("https://")) clean = "wss://" + clean.slice(8);
-  else if (clean.startsWith("http://")) clean = "ws://" + clean.slice(7);
-
-  if (!clean.startsWith("ws://") && !clean.startsWith("wss://")) {
-    const proto = window.location.protocol === "https:" ? "wss://" : "ws://";
-    clean = proto + clean;
-  }
-
-  if (!clean.endsWith("/ws/scan")) {
-    clean = `${clean}/ws/scan`;
-  }
-  return clean;
+if ($("deck-date")) {
+  $("deck-date").value = new Date().toISOString().slice(0, 10);
 }
 
 function getScannerWsUrl() {
@@ -90,18 +74,6 @@ function setScannerConnectionUi(label, stateClass, isRunning) {
   if (btn) {
     btn.textContent = isRunning ? "Ferma Scanner" : "Avvia Scanner";
   }
-}
-
-if ($("scannerWsUrlInput")) {
-  $("scannerWsUrlInput").value = getDefaultWsUrl();
-  $("scannerWsUrlInput").addEventListener("change", () => {
-    const normalized = getScannerWsUrl();
-    $("scannerWsUrlInput").value = normalized;
-    localStorage.setItem(STORAGE_KEY_WS_URL, normalized);
-    if (scannerActive) {
-      connectScannerWs();
-    }
-  });
 }
 
 function updateRejectedBadge() {
@@ -677,6 +649,7 @@ function stopFrameLoop() {
     sendFrameTimer = null;
   }
   awaitingServerReply = false;
+  lastFrameSentAt = 0;
 }
 
 function stopScannerSession() {
@@ -712,7 +685,7 @@ function captureJpegBlobFromVideo(callback) {
     return;
   }
 
-  const maxW = 640;
+  const maxW = 480;
   const ratio = Math.min(1, maxW / video.videoWidth);
   const w = Math.max(1, Math.floor(video.videoWidth * ratio));
   const h = Math.max(1, Math.floor(video.videoHeight * ratio));
@@ -728,24 +701,31 @@ function captureJpegBlobFromVideo(callback) {
 function startFrameLoop() {
   stopFrameLoop();
   sendFrameTimer = setInterval(() => {
-    if (pendingProposalCard || awaitingServerReply) return;
+    if (pendingProposalCard) return;
+    if (awaitingServerReply && Date.now() - lastFrameSentAt < 5000) return;
     if (!wsConn || wsConn.readyState !== WebSocket.OPEN) return;
     const video = $("scan-video");
     if (!video || video.readyState < 2) return;
 
     awaitingServerReply = true;
+    lastFrameSentAt = Date.now();
     captureJpegBlobFromVideo((blob) => {
       if (!blob || !wsConn || wsConn.readyState !== WebSocket.OPEN) {
         awaitingServerReply = false;
         return;
       }
-      blob.arrayBuffer().then((buf) => {
-        try {
-          wsConn.send(buf);
-        } catch {
+      blob
+        .arrayBuffer()
+        .then((buf) => {
+          try {
+            wsConn.send(buf);
+          } catch {
+            awaitingServerReply = false;
+          }
+        })
+        .catch(() => {
           awaitingServerReply = false;
-        }
-      });
+        });
     });
   }, 240);
 }
@@ -757,10 +737,6 @@ function connectScannerWs() {
   }
 
   const url = getScannerWsUrl();
-  if ($("scannerWsUrlInput")) {
-    $("scannerWsUrlInput").value = url;
-  }
-  localStorage.setItem(STORAGE_KEY_WS_URL, url);
 
   if (wsConn) {
     try {
@@ -1009,6 +985,9 @@ async function ensureCameraAndWs() {
       });
       const video = $("scan-video");
       video.srcObject = cameraStream;
+      video.setAttribute("playsinline", "true");
+      video.muted = true;
+      await video.play().catch(() => {});
       $("camera-placeholder")?.classList.add("hidden");
     } catch (err) {
       setScanStateBadge("Fotocamera bloccata");
