@@ -487,27 +487,233 @@ function applyDeckHeroBg(bgUrl) {
   }
 }
 
-window.openDeckDetail = function (deckId) {
+let currentDeckHistory = [];
+let currentDeckCards = [];
+
+// Switch sotto-tab della scheda mazzo
+document.querySelectorAll(".deck-subtab-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const targetId = btn.dataset.subtab;
+    document.querySelectorAll(".deck-subtab-btn").forEach((b) => b.classList.toggle("active", b === btn));
+    document.querySelectorAll(".deck-subpanel").forEach((p) => {
+      p.classList.toggle("hidden", p.id !== targetId);
+      p.classList.toggle("active", p.id === targetId);
+    });
+  });
+});
+
+function switchDeckSubtab(targetId) {
+  const btn = document.querySelector(`.deck-subtab-btn[data-subtab="${targetId}"]`);
+  if (btn) btn.click();
+}
+
+window.openDeckDetail = async function (deckId) {
   const deck = myDecks.find((d) => String(d.id) === String(deckId));
   if (!deck) return;
 
   selectedDeckId = deck.id;
   $("deck-detail-title").textContent = deck.name || "Senza nome";
   $("deck-detail-format").textContent = deck.format || deck.type || "Mazzo";
+  $("deck-detail-count").textContent = "";
   applyDeckHeroBg(extractDeckImageUrl(deck) || deck._resolvedArtUrl || "");
   setStatus($("deck-status"), "");
 
   $("decks-list-view").classList.add("hidden");
   $("deck-detail-view").classList.remove("hidden");
+  switchDeckSubtab("deck-sub-stats");
+
+  await Promise.all([
+    loadDeckHistory(deck.id),
+    loadDeckCards(deck),
+  ]);
 };
 
-$("btn-back-to-decks")?.addEventListener("click", () => {
+$("btn-back-to-decks").addEventListener("click", () => {
   selectedDeckId = null;
+  currentDeckHistory = [];
+  currentDeckCards = [];
   $("deck-detail-view").classList.add("hidden");
   $("decks-list-view").classList.remove("hidden");
 });
 
-$("btn-save-deck-match")?.addEventListener("click", async () => {
+// ---- STATISTICHE & STORICO (deck_history) ----
+async function loadDeckHistory(deckId) {
+  const { data, error } = await sb
+    .from("deck_history")
+    .select("id, played_on, match, win, created_at")
+    .eq("deck_id", deckId)
+    .order("played_on", { ascending: true });
+
+  if (error) {
+    setStatus($("deck-status"), error.message, "err");
+    return;
+  }
+
+  currentDeckHistory = data || [];
+  renderDeckStats();
+  renderDeckHistoryList();
+}
+
+function renderDeckStats() {
+  let totalMatches = 0;
+  let totalWins = 0;
+
+  for (const r of currentDeckHistory) {
+    const m = Math.max(0, Number(r.match || 0));
+    const w = Math.max(0, Math.min(Number(r.win || 0), m));
+    totalMatches += m;
+    totalWins += w;
+  }
+
+  const totalLosses = Math.max(0, totalMatches - totalWins);
+  const winrate = totalMatches > 0 ? Math.round((totalWins / totalMatches) * 100) : null;
+
+  $("deck-kpi-matches").textContent = String(totalMatches);
+  $("deck-kpi-wins").textContent = String(totalWins);
+  $("deck-kpi-losses").textContent = String(totalLosses);
+  $("deck-kpi-winrate").textContent = winrate !== null ? `${winrate}%` : "—";
+
+  renderWinLossPie(totalWins, totalLosses);
+  renderWinrateTrend();
+}
+
+function renderWinLossPie(wins, losses) {
+  const box = $("deck-pie-container");
+  const total = wins + losses;
+  if (!total) {
+    box.innerHTML = `<p class="muted">Nessuna partita registrata.</p>`;
+    return;
+  }
+
+  const winPct = (wins / total) * 100;
+  const r = 42;
+  const circ = 2 * Math.PI * r;
+  const winDash = (winPct / 100) * circ;
+
+  box.innerHTML = `
+    <div class="pie-row">
+      <svg width="110" height="110" viewBox="0 0 110 110">
+        <circle cx="55" cy="55" r="${r}" fill="none" stroke="#ef4444" stroke-width="14"></circle>
+        <circle cx="55" cy="55" r="${r}" fill="none" stroke="#22c55e" stroke-width="14"
+          stroke-dasharray="${winDash.toFixed(1)} ${circ.toFixed(1)}"
+          transform="rotate(-90 55 55)"></circle>
+        <text x="55" y="60" text-anchor="middle" fill="#f8fafc" font-size="16" font-weight="700">
+          ${Math.round(winPct)}%
+        </text>
+      </svg>
+      <div class="pie-legend">
+        <div><span class="legend-dot" style="background:#22c55e"></span>Vittorie: <strong>${wins}</strong></div>
+        <div><span class="legend-dot" style="background:#ef4444"></span>Sconfitte: <strong>${losses}</strong></div>
+      </div>
+    </div>
+  `;
+}
+
+function renderWinrateTrend() {
+  const box = $("deck-trend-container");
+  if (!currentDeckHistory.length) {
+    box.innerHTML = `<p class="muted">Registra almeno una sessione per vedere l'andamento.</p>`;
+    return;
+  }
+
+  // Raggruppa per giorno e calcola winrate cumulativo
+  const byDay = new Map();
+  for (const r of currentDeckHistory) {
+    const day = String(r.played_on || "").slice(0, 10);
+    if (!day) continue;
+    const prev = byDay.get(day) || { m: 0, w: 0 };
+    const m = Math.max(0, Number(r.match || 0));
+    const w = Math.max(0, Math.min(Number(r.win || 0), m));
+    byDay.set(day, { m: prev.m + m, w: prev.w + w });
+  }
+
+  const days = Array.from(byDay.keys()).sort();
+  let cumM = 0;
+  let cumW = 0;
+  const points = days.map((day) => {
+    const d = byDay.get(day);
+    cumM += d.m;
+    cumW += d.w;
+    return { day, wr: cumM > 0 ? (cumW / cumM) * 100 : 0 };
+  });
+
+  const W = 300;
+  const H = 120;
+  const padL = 28;
+  const padR = 12;
+  const padT = 12;
+  const padB = 22;
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
+
+  const coords = points.map((p, i) => {
+    const x = points.length === 1 ? padL + plotW / 2 : padL + (i / (points.length - 1)) * plotW;
+    const y = padT + plotH - (p.wr / 100) * plotH;
+    return { x, y, ...p };
+  });
+
+  const polyline = coords.map((c) => `${c.x.toFixed(1)},${c.y.toFixed(1)}`).join(" ");
+  const dots = coords
+    .map((c) => `<circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="3.5" fill="#38bdf8"></circle>`)
+    .join("");
+
+  const firstDay = points[0].day.slice(5);
+  const lastDay = points[points.length - 1].day.slice(5);
+
+  box.innerHTML = `
+    <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;">
+      <line x1="${padL}" y1="${padT}" x2="${W - padR}" y2="${padT}" stroke="rgba(255,255,255,0.08)" />
+      <line x1="${padL}" y1="${padT + plotH / 2}" x2="${W - padR}" y2="${padT + plotH / 2}" stroke="rgba(255,255,255,0.12)" stroke-dasharray="3,3" />
+      <line x1="${padL}" y1="${padT + plotH}" x2="${W - padR}" y2="${padT + plotH}" stroke="rgba(255,255,255,0.08)" />
+      <text x="4" y="${padT + 4}" fill="#64748b" font-size="9">100%</text>
+      <text x="8" y="${padT + plotH / 2 + 3}" fill="#64748b" font-size="9">50%</text>
+      <text x="12" y="${padT + plotH + 3}" fill="#64748b" font-size="9">0%</text>
+      ${points.length > 1 ? `<polyline fill="none" stroke="#38bdf8" stroke-width="2.5" points="${polyline}" />` : ""}
+      ${dots}
+      <text x="${padL}" y="${H - 4}" fill="#94a3b8" font-size="9">${escapeHtml(firstDay)}</text>
+      <text x="${W - padR}" y="${H - 4}" text-anchor="end" fill="#94a3b8" font-size="9">${escapeHtml(lastDay)}</text>
+    </svg>
+  `;
+}
+
+function renderDeckHistoryList() {
+  const container = $("deck-history-list");
+  if (!currentDeckHistory.length) {
+    container.innerHTML = `<p class="muted">Nessuna sessione registrata per questo mazzo.</p>`;
+    return;
+  }
+
+  const reversed = currentDeckHistory.slice().reverse();
+  container.innerHTML = reversed
+    .map((r) => {
+      const m = Math.max(0, Number(r.match || 0));
+      const w = Math.max(0, Math.min(Number(r.win || 0), m));
+      const wr = m > 0 ? Math.round((w / m) * 100) : 0;
+      const dateStr = String(r.played_on || "").slice(0, 10);
+      return `
+        <div class="history-row">
+          <div>
+            <div class="history-score">${w}V / ${m}P (${wr}%)</div>
+            <div class="history-date">${escapeHtml(dateStr)}</div>
+          </div>
+          <button type="button" class="history-del-btn" onclick="deleteDeckHistoryEntry('${escapeHtml(r.id)}')">Elimina</button>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+window.deleteDeckHistoryEntry = async function (entryId) {
+  if (!entryId || !confirm("Eliminare questa sessione?")) return;
+  const { error } = await sb.from("deck_history").delete().eq("id", entryId);
+  if (error) {
+    setStatus($("deck-status"), error.message, "err");
+    return;
+  }
+  await loadDeckHistory(selectedDeckId);
+};
+
+$("btn-save-deck-match").addEventListener("click", async () => {
   const matches = Math.max(1, parseInt($("deck-matches").value || "1", 10));
   const wins = Math.max(0, Math.min(parseInt($("deck-wins").value || "0", 10), matches));
   const playedOn = $("deck-date").value || new Date().toISOString().slice(0, 10);
@@ -517,6 +723,215 @@ $("btn-save-deck-match")?.addEventListener("click", async () => {
     return;
   }
 
+  setStatus($("deck-status"), "Salvataggio...");
+  const { error } = await sb.from("deck_history").insert({
+    deck_id: selectedDeckId,
+    user_id: currentUser.id,
+    played_on: playedOn,
+    match: matches,
+    win: wins,
+  });
+
+  if (error) {
+    setStatus($("deck-status"), error.message, "err");
+    return;
+  }
+
+  $("deck-wins").value = "0";
+  setStatus($("deck-status"), "Partita salvata!", "ok");
+  await loadDeckHistory(selectedDeckId);
+});
+
+// ---- LISTA CARTE & CURVA DI MANA ----
+async function loadDeckCards(deck) {
+  setStatus($("deck-cards-status"), "Caricamento lista...");
+  $("deck-cards-list").innerHTML = "";
+
+  let cards = [];
+  const { data, error } = await sb
+    .from("deck_cards")
+    .select("id, name, type_line, mana_cost, image_url, quantity, is_commander, scryfall_id")
+    .eq("deck_id", deck.id);
+
+  if (!error && Array.isArray(data) && data.length > 0) {
+    cards = data;
+  } else if (Array.isArray(deck.cards_json) && deck.cards_json.length > 0) {
+    cards = deck.cards_json;
+  }
+
+  currentDeckCards = cards;
+  const totalCount = cards.reduce((acc, c) => acc + Math.max(1, Number(c.quantity || 1)), 0);
+  $("deck-detail-count").textContent = totalCount > 0 ? `${totalCount} carte` : "";
+
+  setStatus($("deck-cards-status"), "");
+  renderManaCurve(cards);
+  renderDeckCardsList(cards);
+}
+
+function parseCmcFromManaCost(manaCost) {
+  const raw = String(manaCost || "");
+  if (!raw) return 0;
+  const tokens = raw.match(/\{([^}]+)\}/g) || [];
+  let cmc = 0;
+  for (const t of tokens) {
+    const sym = t.slice(1, -1).toUpperCase();
+    if (/^\d+$/.test(sym)) cmc += parseInt(sym, 10);
+    else if (sym === "X" || sym === "Y" || sym === "Z") cmc += 0;
+    else cmc += 1;
+  }
+  return cmc;
+}
+
+function renderManaPipsHtml(manaCost) {
+  const raw = String(manaCost || "");
+  const tokens = raw.match(/\{([^}]+)\}/g) || [];
+  return tokens
+    .map((t) => {
+      const sym = t.slice(1, -1).toUpperCase();
+      let cls = "mana-num";
+      if (sym === "W") cls = "mana-w";
+      else if (sym === "U") cls = "mana-u";
+      else if (sym === "B") cls = "mana-b";
+      else if (sym === "R") cls = "mana-r";
+      else if (sym === "G") cls = "mana-g";
+      else if (sym === "C") cls = "mana-c";
+      return `<span class="mana-pip ${cls}">${escapeHtml(sym)}</span>`;
+    })
+    .join("");
+}
+
+function getCardCategory(card) {
+  if (card.is_commander) return "Comandante";
+  const tl = String(card.type_line || "").toLowerCase();
+  if (tl.includes("creature")) return "Creature";
+  if (tl.includes("planeswalker")) return "Planeswalker";
+  if (tl.includes("instant")) return "Istantanee";
+  if (tl.includes("sorcery")) return "Stregonerie";
+  if (tl.includes("artifact")) return "Artefatti";
+  if (tl.includes("enchantment")) return "Incantesimi";
+  if (tl.includes("battle")) return "Battaglie";
+  if (tl.includes("land")) return "Terre";
+  return "Altro";
+}
+
+function renderManaCurve(cards) {
+  const buckets = [0, 0, 0, 0, 0, 0, 0]; // 0,1,2,3,4,5,6+
+  let nonLandCount = 0;
+  let cmcSum = 0;
+
+  for (const c of cards) {
+    const tl = String(c.type_line || "").toLowerCase();
+    if (tl.includes("land") && !tl.includes("creature")) continue;
+    const qty = Math.max(1, Number(c.quantity || 1));
+    const cmc = parseCmcFromManaCost(c.mana_cost);
+    const idx = Math.min(6, Math.max(0, Math.floor(cmc)));
+    buckets[idx] += qty;
+    nonLandCount += qty;
+    cmcSum += cmc * qty;
+  }
+
+  const avg = nonLandCount > 0 ? (cmcSum / nonLandCount).toFixed(2) : "—";
+  $("deck-avg-cmc").textContent = `CMC ${avg}`;
+
+  const maxVal = Math.max(1, ...buckets);
+  const labels = ["0", "1", "2", "3", "4", "5", "6+"];
+  $("deck-mana-curve").innerHTML = buckets
+    .map((val, i) => {
+      const hPct = Math.round((val / maxVal) * 100);
+      return `
+        <div class="curve-col">
+          <span class="curve-count">${val || ""}</span>
+          <div class="curve-bar-wrap">
+            <div class="curve-bar" style="height:${val ? Math.max(8, hPct) : 2}%;"></div>
+          </div>
+          <span class="curve-label">${labels[i]}</span>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+function renderDeckCardsList(cards) {
+  const container = $("deck-cards-list");
+  if (!cards.length) {
+    container.innerHTML = `<p class="muted">Nessuna carta salvata sul cloud per questo mazzo.</p>`;
+    return;
+  }
+
+  const order = [
+    "Comandante", "Creature", "Planeswalker", "Istantanee",
+    "Stregonerie", "Artefatti", "Incantesimi", "Battaglie", "Terre", "Altro",
+  ];
+  const groups = new Map();
+
+  cards.forEach((c, idx) => {
+    const cat = getCardCategory(c);
+    if (!groups.has(cat)) groups.set(cat, []);
+    groups.get(cat).push({ ...c, _idx: idx });
+  });
+
+  container.innerHTML = order
+    .filter((cat) => groups.has(cat))
+    .map((cat) => {
+      const list = groups.get(cat).sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "it"));
+      const catCount = list.reduce((s, c) => s + Math.max(1, Number(c.quantity || 1)), 0);
+      const rows = list
+        .map((c) => {
+          const qty = Math.max(1, Number(c.quantity || 1));
+          const qtyHtml = qty > 1 ? `<span class="deck-card-qty">${qty}x</span>` : "";
+          const crown = c.is_commander ? "👑 " : "";
+          return `
+            <div class="deck-card-row" onclick="openCardPreview(${c._idx})">
+              <div class="deck-card-left">
+                ${qtyHtml}
+                <span class="deck-card-name">${crown}${escapeHtml(c.name || "")}</span>
+              </div>
+              <div class="deck-card-mana">${renderManaPipsHtml(c.mana_cost)}</div>
+            </div>
+          `;
+        })
+        .join("");
+
+      return `
+        <div class="deck-cat-block">
+          <div class="deck-cat-title"><span>${cat}</span><span>${catCount}</span></div>
+          ${rows}
+        </div>
+      `;
+    })
+    .join("");
+}
+
+window.openCardPreview = async function (cardIdx) {
+  const card = currentDeckCards[cardIdx];
+  if (!card) return;
+
+  $("card-preview-name").textContent = card.name || "";
+  $("card-preview-meta").textContent = card.type_line || "";
+  const imgEl = $("card-preview-img");
+  imgEl.src = "";
+  $("card-preview-modal").classList.remove("hidden");
+
+  let url = card.card_image_url || card.image_url || "";
+  if (url.includes("/art_crop/")) url = url.replace("/art_crop/", "/normal/");
+
+  if (!url && card.name) {
+    try {
+      const resp = await fetch(`https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(card.name)}`);
+      if (resp.ok) {
+        const sc = await resp.json();
+        url = sc?.image_uris?.normal || sc?.card_faces?.[0]?.image_uris?.normal || "";
+      }
+    } catch {
+      // ignora
+    }
+  }
+  if (url) imgEl.src = url;
+};
+
+$("btn-close-card-preview").addEventListener("click", () => {
+  $("card-preview-modal").classList.add("hidden");
+});
   setStatus($("deck-status"), "Salvataggio...");
   const { error } = await sb.from("deck_history").insert({
     deck_id: selectedDeckId,
