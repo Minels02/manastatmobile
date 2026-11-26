@@ -44,11 +44,13 @@
 
           <div id="deck-detail-hero" class="detail-hero">
             <div class="detail-hero-inner">
-              <h2 id="deck-detail-title">Mazzo</h2>
+              <div class="deck-hero-title-row">
+                <h2 id="deck-detail-title">Mazzo</h2>
+                <span id="deck-detail-ci" class="deck-ci-icons"></span>
+              </div>
               <span id="deck-detail-format" class="badge">Formato</span>
             </div>
           </div>
-
           <!-- SOTTO-TAB DEL MAZZO -->
           <div class="deck-subtabs" role="tablist">
             <button type="button" class="deck-subtab-btn active" data-subtab="deck-sub-stats">Statistiche</button>
@@ -84,6 +86,7 @@
 
             <div class="card">
               <h3>Andamento Winrate nel tempo</h3>
+              <div id="deck-trend-detail" class="trend-detail-bar muted">Tocca un punto per i dettagli</div>
               <div id="deck-trend-container" class="deck-chart-box"></div>
             </div>
           </div>
@@ -91,11 +94,22 @@
           <!-- SOTTO-TAB 2: LISTA CARTE -->
           <div id="deck-sub-cards" class="deck-subpanel hidden">
             <div class="card">
-              <div class="deck-curve-header">
-                <h3>Curva di Mana</h3>
-                <span id="deck-avg-cmc" class="badge">CMC —</span>
+              <h3>Aggiungi carta</h3>
+              <div class="deck-search-row">
+                <input
+                  id="deck-card-search-input"
+                  type="text"
+                  placeholder="Cerca carta su Scryfall (es. Sol Ring)..."
+                  autocomplete="off"
+                />
+                <button id="btn-deck-card-search" type="button" class="btn primary small">Cerca</button>
               </div>
-              <div id="deck-mana-curve" class="mana-curve-bars"></div>
+              <label id="deck-ci-filter-wrap" class="deck-ci-filter-row hidden">
+                <input id="deck-ci-filter-chk" type="checkbox" checked />
+                <span>Solo identità di colore del comandante</span>
+              </label>
+              <p id="deck-search-status" class="status"></p>
+              <div id="deck-search-results" class="deck-search-results"></div>
             </div>
 
             <div class="card">
