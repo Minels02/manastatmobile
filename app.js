@@ -793,65 +793,7 @@ function renderWinrateTrendSvg() {
   `;
 }
 
-  // Raggruppa per giorno e calcola winrate cumulativo
-  const byDay = new Map();
-  for (const r of currentDeckHistory) {
-    const day = String(r.played_on || "").slice(0, 10);
-    if (!day) continue;
-    const prev = byDay.get(day) || { m: 0, w: 0 };
-    const m = Math.max(0, Number(r.match || 0));
-    const w = Math.max(0, Math.min(Number(r.win || 0), m));
-    byDay.set(day, { m: prev.m + m, w: prev.w + w });
-  }
-
-  const days = Array.from(byDay.keys()).sort();
-  let cumM = 0;
-  let cumW = 0;
-  const points = days.map((day) => {
-    const d = byDay.get(day);
-    cumM += d.m;
-    cumW += d.w;
-    return { day, wr: cumM > 0 ? (cumW / cumM) * 100 : 0 };
-  });
-
-  const W = 300;
-  const H = 120;
-  const padL = 28;
-  const padR = 12;
-  const padT = 12;
-  const padB = 22;
-  const plotW = W - padL - padR;
-  const plotH = H - padT - padB;
-
-  const coords = points.map((p, i) => {
-    const x = points.length === 1 ? padL + plotW / 2 : padL + (i / (points.length - 1)) * plotW;
-    const y = padT + plotH - (p.wr / 100) * plotH;
-    return { x, y, ...p };
-  });
-
-  const polyline = coords.map((c) => `${c.x.toFixed(1)},${c.y.toFixed(1)}`).join(" ");
-  const dots = coords
-    .map((c) => `<circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="3.5" fill="#38bdf8"></circle>`)
-    .join("");
-
-  const firstDay = points[0].day.slice(5);
-  const lastDay = points[points.length - 1].day.slice(5);
-
-  box.innerHTML = `
-    <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;">
-      <line x1="${padL}" y1="${padT}" x2="${W - padR}" y2="${padT}" stroke="rgba(255,255,255,0.08)" />
-      <line x1="${padL}" y1="${padT + plotH / 2}" x2="${W - padR}" y2="${padT + plotH / 2}" stroke="rgba(255,255,255,0.12)" stroke-dasharray="3,3" />
-      <line x1="${padL}" y1="${padT + plotH}" x2="${W - padR}" y2="${padT + plotH}" stroke="rgba(255,255,255,0.08)" />
-      <text x="4" y="${padT + 4}" fill="#64748b" font-size="9">100%</text>
-      <text x="8" y="${padT + plotH / 2 + 3}" fill="#64748b" font-size="9">50%</text>
-      <text x="12" y="${padT + plotH + 3}" fill="#64748b" font-size="9">0%</text>
-      ${points.length > 1 ? `<polyline fill="none" stroke="#38bdf8" stroke-width="2.5" points="${polyline}" />` : ""}
-      ${dots}
-      <text x="${padL}" y="${H - 4}" fill="#94a3b8" font-size="9">${escapeHtml(firstDay)}</text>
-      <text x="${W - padR}" y="${H - 4}" text-anchor="end" fill="#94a3b8" font-size="9">${escapeHtml(lastDay)}</text>
-    </svg>
-  `;
-}
+  
 
 function renderDeckHistoryList() {
   const container = $("deck-history-list");
