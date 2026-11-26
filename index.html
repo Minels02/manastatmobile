@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>ManaStat Companion</title>
   <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="style.css?v=7" />
+  <link rel="stylesheet" href="style.css?v=9" />
 </head>
 <body>
   <div id="app">
@@ -51,6 +51,7 @@
               <span id="deck-detail-format" class="badge">Formato</span>
             </div>
           </div>
+
           <!-- SOTTO-TAB DEL MAZZO -->
           <div class="deck-subtabs" role="tablist">
             <button type="button" class="deck-subtab-btn active" data-subtab="deck-sub-stats">Statistiche</button>
@@ -58,27 +59,8 @@
             <button type="button" class="deck-subtab-btn" data-subtab="deck-sub-matches">Partite</button>
           </div>
 
-          <!-- SOTTO-TAB 1: STATISTICHE -->
+          <!-- SOTTO-TAB 1: STATISTICHE (SOLO GRAFICI) -->
           <div id="deck-sub-stats" class="deck-subpanel active">
-            <div class="deck-kpi-grid">
-              <div class="kpi-card">
-                <div class="kpi-label">Winrate</div>
-                <div id="deck-kpi-winrate" class="kpi-value">—</div>
-              </div>
-              <div class="kpi-card">
-                <div class="kpi-label">Partite</div>
-                <div id="deck-kpi-matches" class="kpi-value">0</div>
-              </div>
-              <div class="kpi-card">
-                <div class="kpi-label">Vittorie</div>
-                <div id="deck-kpi-wins" class="kpi-value kpi-win">0</div>
-              </div>
-              <div class="kpi-card">
-                <div class="kpi-label">Sconfitte</div>
-                <div id="deck-kpi-losses" class="kpi-value kpi-loss">0</div>
-              </div>
-            </div>
-
             <div class="card">
               <h3>Vittorie / Sconfitte</h3>
               <div id="deck-pie-container" class="deck-chart-box"></div>
@@ -87,13 +69,22 @@
             <div class="card">
               <h3>Andamento Winrate nel tempo</h3>
               <div id="deck-trend-detail" class="trend-detail-bar muted">Tocca un punto per i dettagli</div>
-              <div id="deck-trend-container" class="deck-chart-box"></div>
+              <div id="deck-trend-shell" class="trend-chart-shell">
+                <div class="trend-y-axis">
+                  <span>100%</span>
+                  <span>50%</span>
+                  <span>0%</span>
+                </div>
+                <div id="deck-trend-scroll" class="trend-scroll-wrap">
+                  <div id="deck-trend-container" class="deck-chart-box"></div>
+                </div>
+              </div>
             </div>
           </div>
 
           <!-- SOTTO-TAB 2: LISTA CARTE -->
           <div id="deck-sub-cards" class="deck-subpanel hidden">
-            <div class="card">
+            <div id="deck-search-card" class="card">
               <h3>Aggiungi carta</h3>
               <div class="deck-search-row">
                 <input
@@ -104,15 +95,13 @@
                 />
                 <button id="btn-deck-card-search" type="button" class="btn primary small">Cerca</button>
               </div>
-              <label id="deck-ci-filter-wrap" class="deck-ci-filter-row hidden">
-                <input id="deck-ci-filter-chk" type="checkbox" checked />
-                <span>Solo identità di colore del comandante</span>
-              </label>
-              <p id="deck-search-status" class="status"></p>
-              <div id="deck-search-results" class="deck-search-results"></div>
+              <div id="deck-search-dropdown" class="hidden">
+                <p id="deck-search-status" class="status"></p>
+                <div id="deck-search-results" class="deck-search-grid"></div>
+              </div>
             </div>
 
-            <div class="card">
+            <div class="card deck-cards-list-card">
               <p id="deck-cards-status" class="status"></p>
               <div id="deck-cards-list" class="deck-cards-grouped"></div>
             </div>
@@ -120,7 +109,7 @@
 
           <!-- SOTTO-TAB 3: PARTITE & STORICO -->
           <div id="deck-sub-matches" class="deck-subpanel hidden">
-            <div class="card">
+            <div class="card deck-match-form-card">
               <h3>Registra partita</h3>
               <div class="row-2">
                 <div>
@@ -134,7 +123,7 @@
               </div>
 
               <label>Data</label>
-              <input id="deck-date" type="date" />
+              <input id="deck-date" type="date" class="deck-date-input" />
 
               <button id="btn-save-deck-match" class="btn primary">Salva partita su mazzo</button>
               <p id="deck-status" class="status"></p>
@@ -331,6 +320,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="app.js?v=7"></script>
+  <script src="app.js?v=9"></script>
 </body>
 </html>
