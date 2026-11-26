@@ -937,23 +937,8 @@ window.openCardPreview = async function (cardIdx) {
 $("btn-close-card-preview").addEventListener("click", () => {
   $("card-preview-modal").classList.add("hidden");
 });
-  setStatus($("deck-status"), "Salvataggio...");
-  const { error } = await sb.from("deck_history").insert({
-    deck_id: selectedDeckId,
-    user_id: currentUser.id,
-    played_on: playedOn,
-    match: matches,
-    win: wins,
-  });
 
-  if (error) {
-    setStatus($("deck-status"), error.message, "err");
-    return;
-  }
-  $("deck-wins").value = "0";
-  setStatus($("deck-status"), "Partita salvata! La ritroverai nell'app desktop.", "ok");
-});
-
+  
 // ---- PAGINA GRUPPI ----
 async function loadGroups() {
   setStatus($("group-list-status"), "Caricamento gruppi...");
