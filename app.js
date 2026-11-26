@@ -19,7 +19,7 @@ const DEFAULT_SCANNER_WS_URL = "wss://manastat-scanner-server.onrender.com/ws/sc
 const STORAGE_SETS_KEY = "manastat_scanner_selected_sets";
 
 // Badge versione sempre visibile sopra la barra di navigazione
-const APP_UI_VERSION = "v2.5";
+const APP_UI_VERSION = "v2.7";
 let connectedServerVersion = "";
 
 function renderVersionBadge() {
@@ -504,6 +504,10 @@ document.querySelectorAll(".deck-subtab-btn").forEach((btn) => {
       p.classList.toggle("hidden", p.id !== targetId);
       p.classList.toggle("active", p.id === targetId);
     });
+    if (targetId === "deck-sub-stats") {
+      const scroller = $("deck-trend-scroll");
+      if (scroller) scroller.scrollLeft = scroller.scrollWidth;
+    }
   });
 });
 
@@ -522,6 +526,7 @@ window.openDeckDetail = async function (deckId) {
   $("deck-detail-count").textContent = "";
   applyDeckHeroBg(extractDeckImageUrl(deck) || deck._resolvedArtUrl || "");
   setStatus($("deck-status"), "");
+  $("deck-search-dropdown")?.classList.add("hidden");
 
   $("decks-list-view").classList.add("hidden");
   $("deck-detail-view").classList.remove("hidden");
@@ -533,10 +538,11 @@ window.openDeckDetail = async function (deckId) {
   ]);
 };
 
-$("btn-back-to-decks").addEventListener("click", () => {
+$("btn-back-to-decks")?.addEventListener("click", () => {
   selectedDeckId = null;
   currentDeckHistory = [];
   currentDeckCards = [];
+  $("deck-search-dropdown")?.classList.add("hidden");
   $("deck-detail-view").classList.add("hidden");
   $("decks-list-view").classList.remove("hidden");
 });
@@ -571,13 +577,6 @@ function renderDeckStats() {
   }
 
   const totalLosses = Math.max(0, totalMatches - totalWins);
-  const winrate = totalMatches > 0 ? Math.round((totalWins / totalMatches) * 100) : null;
-
-  $("deck-kpi-matches").textContent = String(totalMatches);
-  $("deck-kpi-wins").textContent = String(totalWins);
-  $("deck-kpi-losses").textContent = String(totalLosses);
-  $("deck-kpi-winrate").textContent = winrate !== null ? `${winrate}%` : "—";
-
   renderWinLossPie(totalWins, totalLosses);
   renderWinrateTrend();
 }
@@ -609,6 +608,7 @@ function renderWinLossPie(wins, losses) {
       <div class="pie-legend">
         <div><span class="legend-dot" style="background:#22c55e"></span>Vittorie: <strong>${wins}</strong></div>
         <div><span class="legend-dot" style="background:#ef4444"></span>Sconfitte: <strong>${losses}</strong></div>
+        <div class="muted" style="font-size:12px;">Partite totali: <strong>${total}</strong></div>
       </div>
     </div>
   `;
@@ -637,30 +637,34 @@ function updateTrendDetailBar(idx) {
     bar.innerHTML = `<span class="muted">Nessun dato nel periodo</span>`;
     return;
   }
-  const dayWr = p.dayM > 0 ? Math.round((p.dayW / p.dayM) * 100) : 0;
   bar.innerHTML = `
-    <span><strong>${escapeHtml(formatFullDateIt(p.day))}</strong> · Giorno: ${p.dayW}/${p.dayM} (${dayWr}%)</span>
-    <span class="trend-detail-wr">Tot: ${Math.round(p.wr)}%</span>
+    <span><strong>${escapeHtml(formatFullDateIt(p.day))}</strong> · ${p.dayW}V/${p.dayM}P</span>
+    <span class="trend-detail-wr">Tot: ${p.cumW}V/${p.cumM}P (${Math.round(p.wr)}%)</span>
   `;
 }
 
 window.selectTrendPoint = function (idx) {
   if (idx < 0 || idx >= trendChartPoints.length) return;
   selectedTrendIdx = idx;
-  renderWinrateTrendSvg();
+  renderWinrateTrendSvg(false);
   updateTrendDetailBar(idx);
 };
 
 function renderWinrateTrend() {
   const box = $("deck-trend-container");
   const bar = $("deck-trend-detail");
+  const shell = $("deck-trend-shell");
+
   if (!currentDeckHistory.length) {
     trendChartPoints = [];
     selectedTrendIdx = -1;
     if (bar) bar.innerHTML = `<span class="muted">Registra almeno una sessione</span>`;
-    box.innerHTML = `<p class="muted">Registra almeno una sessione per vedere l'andamento.</p>`;
+    if (shell) shell.classList.add("hidden");
+    box.innerHTML = "";
     return;
   }
+
+  if (shell) shell.classList.remove("hidden");
 
   const byDay = new Map();
   for (const r of currentDeckHistory) {
@@ -690,60 +694,59 @@ function renderWinrateTrend() {
   });
 
   selectedTrendIdx = trendChartPoints.length - 1;
-  renderWinrateTrendSvg();
+  renderWinrateTrendSvg(true);
   updateTrendDetailBar(selectedTrendIdx);
 }
 
-function renderWinrateTrendSvg() {
+function renderWinrateTrendSvg(autoScrollToEnd = false) {
   const box = $("deck-trend-container");
+  const scroller = $("deck-trend-scroll");
   const points = trendChartPoints;
-  if (!points.length) return;
+  if (!points.length || !box) return;
 
-  const W = 340;
-  const H = 165;
-  const padL = 34;
-  const padR = 16;
-  const padT = 14;
-  const padB = 28;
-  const plotW = W - padL - padR;
+  const prevScrollLeft = scroller ? scroller.scrollLeft : 0;
+
+  // Finestra di 10 punti visibili, scorrevole orizzontalmente se > 10
+  const visibleW = Math.max(240, scroller ? scroller.clientWidth : 280);
+  const padL = 18;
+  const padR = 18;
+  const padT = 12;
+  const padB = 22;
+  const H = 132;
   const plotH = H - padT - padB;
 
+  const stepX = points.length <= 10
+    ? (points.length === 1 ? 0 : (visibleW - padL - padR) / (points.length - 1))
+    : Math.max(30, (visibleW - padL - padR) / 9);
+
+  const W = points.length <= 10
+    ? visibleW
+    : Math.round(padL + padR + (points.length - 1) * stepX);
+
   const coords = points.map((p, i) => {
-    const x = points.length === 1 ? padL + plotW / 2 : padL + (i / (points.length - 1)) * plotW;
+    const x = points.length === 1 ? W / 2 : padL + i * stepX;
     const y = padT + plotH - (p.wr / 100) * plotH;
     return { x, y, ...p };
   });
 
-  // Griglia orizzontale 0, 25, 50, 75, 100%
-  const gridHtml = [0, 25, 50, 75, 100]
+  const gridHtml = [0, 50, 100]
     .map((pct) => {
       const y = padT + plotH - (pct / 100) * plotH;
-      const dash = pct === 50 ? `stroke-dasharray="4,3" stroke="rgba(148,163,184,0.35)"` : `stroke="rgba(255,255,255,0.08)"`;
-      return `
-        <line x1="${padL}" y1="${y.toFixed(1)}" x2="${W - padR}" y2="${y.toFixed(1)}" ${dash} />
-        <text x="${padL - 5}" y="${(y + 3).toFixed(1)}" text-anchor="end" fill="#64748b" font-size="9">${pct}%</text>
-      `;
+      const dash = pct === 50
+        ? `stroke-dasharray="4,3" stroke="rgba(148,163,184,0.35)"`
+        : `stroke="rgba(255,255,255,0.08)"`;
+      return `<line x1="0" y1="${y.toFixed(1)}" x2="${W}" y2="${y.toFixed(1)}" ${dash} />`;
     })
     .join("");
 
-  // Etichette asse X ben distribuite (max 5 etichette, mai sovrapposte)
-  const labelIndices = new Set([0, points.length - 1]);
-  if (points.length > 2) {
-    const maxLabels = Math.min(5, points.length);
-    const step = (points.length - 1) / (maxLabels - 1);
-    for (let k = 1; k < maxLabels - 1; k++) {
-      labelIndices.add(Math.round(k * step));
-    }
-  }
   let lastLabelX = -999;
-  const xLabelsHtml = Array.from(labelIndices)
-    .sort((a, b) => a - b)
-    .map((i) => {
-      const c = coords[i];
-      if (c.x - lastLabelX < 42 && i !== points.length - 1) return "";
+  const xLabelsHtml = coords
+    .map((c, i) => {
+      const isEdge = i === 0 || i === coords.length - 1;
+      if (!isEdge && c.x - lastLabelX < 44) return "";
+      if (isEdge && i === coords.length - 1 && c.x - lastLabelX < 32) return "";
       lastLabelX = c.x;
-      const anchor = i === 0 ? "start" : i === points.length - 1 ? "end" : "middle";
-      return `<text x="${c.x.toFixed(1)}" y="${H - 6}" text-anchor="${anchor}" fill="#94a3b8" font-size="9.5">${escapeHtml(formatShortDateIt(c.day))}</text>`;
+      return `<text x="${c.x.toFixed(1)}" y="${H - 5}" text-anchor="middle" fill="#94a3b8" font-size="9">${escapeHtml(formatShortDateIt(c.day))}</text>`;
     })
     .join("");
 
@@ -763,7 +766,7 @@ function renderWinrateTrendSvg() {
   const dotsHtml = coords
     .map((c, i) => {
       const isSel = i === selectedTrendIdx;
-      const r = isSel ? 5.5 : 3.5;
+      const r = isSel ? 5 : 3.2;
       const fill = isSel ? "#ffffff" : "#22c55e";
       const stroke = isSel ? "#38bdf8" : "#0f172a";
       return `
@@ -776,24 +779,30 @@ function renderWinrateTrendSvg() {
     .join("");
 
   box.innerHTML = `
-    <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;">
+    <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="display:block;">
       <defs>
         <linearGradient id="wrAreaGrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="#22c55e" stop-opacity="0.32" />
+          <stop offset="0%" stop-color="#22c55e" stop-opacity="0.30" />
           <stop offset="100%" stop-color="#22c55e" stop-opacity="0.02" />
         </linearGradient>
       </defs>
       ${gridHtml}
       ${areaPath ? `<path d="${areaPath}" fill="url(#wrAreaGrad)" />` : ""}
-      ${points.length > 1 ? `<polyline fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" points="${polyline}" />` : ""}
+      ${points.length > 1 ? `<polyline fill="none" stroke="#22c55e" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round" points="${polyline}" />` : ""}
       ${guideLine}
       ${dotsHtml}
       ${xLabelsHtml}
     </svg>
   `;
-}
 
-  
+  if (scroller) {
+    if (autoScrollToEnd) {
+      scroller.scrollLeft = scroller.scrollWidth;
+    } else {
+      scroller.scrollLeft = prevScrollLeft;
+    }
+  }
+}
 
 function renderDeckHistoryList() {
   const container = $("deck-history-list");
@@ -808,7 +817,7 @@ function renderDeckHistoryList() {
       const m = Math.max(0, Number(r.match || 0));
       const w = Math.max(0, Math.min(Number(r.win || 0), m));
       const wr = m > 0 ? Math.round((w / m) * 100) : 0;
-      const dateStr = String(r.played_on || "").slice(0, 10);
+      const dateStr = formatFullDateIt(String(r.played_on || "").slice(0, 10));
       return `
         <div class="history-row">
           <div>
@@ -832,7 +841,7 @@ window.deleteDeckHistoryEntry = async function (entryId) {
   await loadDeckHistory(selectedDeckId);
 };
 
-$("btn-save-deck-match").addEventListener("click", async () => {
+$("btn-save-deck-match")?.addEventListener("click", async () => {
   const matches = Math.max(1, parseInt($("deck-matches").value || "1", 10));
   const wins = Math.max(0, Math.min(parseInt($("deck-wins").value || "0", 10), matches));
   const playedOn = $("deck-date").value || new Date().toISOString().slice(0, 10);
@@ -861,7 +870,7 @@ $("btn-save-deck-match").addEventListener("click", async () => {
   await loadDeckHistory(selectedDeckId);
 });
 
-// ---- ICONE SVG MAGIC, LISTA CARTE, RICERCA & CONTATORI ----
+// ---- ICONE SVG MAGIC, LISTA CARTE, RICERCA A GRIGLIA & CONTATORI ----
 let deckSearchResults = [];
 let deckSearchTimer = null;
 
@@ -916,16 +925,13 @@ function updateDeckCommanderCiUi() {
       .map((sym) => `<img class="mana-svg" src="${manaSymbolToSvgUrl(sym)}" alt="${sym}" />`)
       .join("");
   }
-  const filterWrap = $("deck-ci-filter-wrap");
-  if (filterWrap) {
-    filterWrap.classList.toggle("hidden", ci.length === 0);
-  }
 }
 
 async function loadDeckCards(deck) {
   setStatus($("deck-cards-status"), "Caricamento lista...");
   $("deck-cards-list").innerHTML = "";
   $("deck-search-results").innerHTML = "";
+  $("deck-search-dropdown")?.classList.add("hidden");
   setStatus($("deck-search-status"), "");
   if ($("deck-card-search-input")) $("deck-card-search-input").value = "";
 
@@ -1016,19 +1022,23 @@ function renderDeckCardsList(cards) {
         .map((c) => {
           const qty = Math.max(1, Number(c.quantity || 1));
           const crown = c.is_commander ? "👑 " : "";
-          return `
-            <div class="deck-card-row">
-              <div class="deck-card-left" onclick="openCardPreview(${c._idx})">
-                <span class="deck-card-name">${crown}${escapeHtml(c.name || "")}</span>
-              </div>
-              <div class="deck-card-right">
-                <div class="deck-card-mana">${renderManaPipsHtml(c.mana_cost)}</div>
+          const manaHtml = renderManaPipsHtml(c.mana_cost);
+          const qtyControlsHtml = c.is_commander
+            ? ""
+            : `
                 <div class="deck-qty-controls">
                   <button type="button" class="deck-qty-btn" onclick="changeDeckCardQty(${c._idx}, -1)">−</button>
-                  <span class="deck-qty-num">${qty}</span>
+                  <span class="deck-qty-num" data-card-qty-idx="${c._idx}">${qty}</span>
                   <button type="button" class="deck-qty-btn" onclick="changeDeckCardQty(${c._idx}, 1)">+</button>
                 </div>
+              `;
+          return `
+            <div class="deck-card-row">
+              <div class="deck-card-main" onclick="openCardPreview(${c._idx})">
+                <span class="deck-card-name">${crown}${escapeHtml(c.name || "")}</span>
+                ${manaHtml ? `<div class="deck-card-mana">${manaHtml}</div>` : ""}
               </div>
+              ${qtyControlsHtml}
             </div>
           `;
         })
@@ -1036,7 +1046,7 @@ function renderDeckCardsList(cards) {
 
       return `
         <div class="deck-cat-block">
-          <div class="deck-cat-title"><span>${cat}</span><span>${catCount}</span></div>
+          <div class="deck-cat-title"><span>${cat}</span><span data-cat-count="${escapeHtml(cat)}">${catCount}</span></div>
           ${rows}
         </div>
       `;
@@ -1046,7 +1056,7 @@ function renderDeckCardsList(cards) {
 
 window.changeDeckCardQty = async function (cardIdx, delta) {
   const card = currentDeckCards[cardIdx];
-  if (!card || !selectedDeckId) return;
+  if (!card || !selectedDeckId || card.is_commander) return;
 
   const curQty = Math.max(1, Number(card.quantity || 1));
   const newQty = curQty + delta;
@@ -1061,38 +1071,61 @@ window.changeDeckCardQty = async function (cardIdx, delta) {
       }
     }
     currentDeckCards.splice(cardIdx, 1);
-  } else {
-    card.quantity = newQty;
-    if (card.id) {
-      const { error } = await sb.from("deck_cards").update({ quantity: newQty }).eq("id", card.id);
-      if (error) {
-        setStatus($("deck-cards-status"), error.message, "err");
-        return;
-      }
-    }
+    updateDeckCardCountAndCi();
+    renderDeckCardsList(currentDeckCards);
+    await syncDeckCardsJson(selectedDeckId);
+    return;
   }
 
+  // Aggiornamento immediato sul posto (zero flash della pagina)
+  card.quantity = newQty;
+  const qtyEl = document.querySelector(`[data-card-qty-idx="${cardIdx}"]`);
+  if (qtyEl) qtyEl.textContent = String(newQty);
+
+  const cat = getCardCategory(card);
+  const catCount = currentDeckCards
+    .filter((c) => getCardCategory(c) === cat)
+    .reduce((s, c) => s + Math.max(1, Number(c.quantity || 1)), 0);
+  const catEl = document.querySelector(`[data-cat-count="${cat}"]`);
+  if (catEl) catEl.textContent = String(catCount);
+
   updateDeckCardCountAndCi();
-  renderDeckCardsList(currentDeckCards);
+
+  if (card.id) {
+    const { error } = await sb.from("deck_cards").update({ quantity: newQty }).eq("id", card.id);
+    if (error) {
+      // Ripristina in caso di errore
+      card.quantity = curQty;
+      if (qtyEl) qtyEl.textContent = String(curQty);
+      updateDeckCardCountAndCi();
+      setStatus($("deck-cards-status"), error.message, "err");
+      return;
+    }
+  }
   await syncDeckCardsJson(selectedDeckId);
 };
 
-// ---- RICERCA & AGGIUNTA CARTE DA SCRYFALL ----
+// ---- RICERCA A GRIGLIA & AGGIUNTA CARTE DA SCRYFALL ----
 async function performDeckCardSearch() {
   const input = $("deck-card-search-input");
   const rawQuery = (input?.value || "").trim();
+  const dropdown = $("deck-search-dropdown");
   const resBox = $("deck-search-results");
 
   if (rawQuery.length < 2) {
     deckSearchResults = [];
     resBox.innerHTML = "";
     setStatus($("deck-search-status"), "");
+    dropdown?.classList.add("hidden");
     return;
   }
 
+  dropdown?.classList.remove("hidden");
+
+  // Filtro identità di colore del comandante sempre attivo quando presente
   let q = rawQuery;
   const ci = extractCommanderColorIdentity(currentDeckCards);
-  if (ci.length > 0 && $("deck-ci-filter-chk")?.checked) {
+  if (ci.length > 0) {
     const ciToken = ci.join("").toLowerCase();
     q = `${rawQuery} id<=${ciToken}`;
   }
@@ -1114,16 +1147,16 @@ async function performDeckCardSearch() {
 
     resBox.innerHTML = deckSearchResults
       .map((c, i) => {
-        const mc = c.mana_cost || c.card_faces?.[0]?.mana_cost || "";
+        const img =
+          c.image_uris?.normal ||
+          c.image_uris?.small ||
+          c.card_faces?.[0]?.image_uris?.normal ||
+          c.card_faces?.[0]?.image_uris?.small ||
+          "";
         return `
-          <div class="deck-search-item">
-            <div class="deck-search-item-info">
-              <div class="deck-search-item-name">${escapeHtml(c.name || "")}</div>
-              <div class="deck-search-item-sub">
-                <span>${renderManaPipsHtml(mc)}</span>
-                <span>${escapeHtml((c.type_line || "").split("—")[0].trim())}</span>
-              </div>
-            </div>
+          <div class="deck-search-tile">
+            ${img ? `<img class="deck-search-tile-img" src="${escapeHtml(img)}" alt="${escapeHtml(c.name || "")}" loading="lazy" />` : `<div class="deck-search-tile-img"></div>`}
+            <div class="deck-search-tile-name">${escapeHtml(c.name || "")}</div>
             <button type="button" class="deck-add-btn" onclick="addCardToCurrentDeck(${i})">Aggiungi</button>
           </div>
         `;
@@ -1139,9 +1172,26 @@ $("deck-card-search-input")?.addEventListener("input", () => {
   clearTimeout(deckSearchTimer);
   deckSearchTimer = setTimeout(performDeckCardSearch, 350);
 });
-$("deck-ci-filter-chk")?.addEventListener("change", () => {
-  if (($("deck-card-search-input")?.value || "").trim().length >= 2) {
-    performDeckCardSearch();
+
+// Riapre il menu risultati quando si riclicca sulla barra di ricerca
+$("deck-card-search-input")?.addEventListener("focus", () => {
+  const val = ($("deck-card-search-input")?.value || "").trim();
+  const dropdown = $("deck-search-dropdown");
+  if (val.length >= 2 && dropdown) {
+    dropdown.classList.remove("hidden");
+    if (!deckSearchResults.length) {
+      performDeckCardSearch();
+    }
+  }
+});
+
+// Chiude il menu risultati quando si clicca fuori dal box ricerca
+document.addEventListener("click", (e) => {
+  const searchCard = $("deck-search-card");
+  const dropdown = $("deck-search-dropdown");
+  if (!searchCard || !dropdown) return;
+  if (!searchCard.contains(e.target)) {
+    dropdown.classList.add("hidden");
   }
 });
 
@@ -1231,7 +1281,6 @@ $("btn-close-card-preview")?.addEventListener("click", () => {
   $("card-preview-modal").classList.add("hidden");
 });
 
-  
 // ---- PAGINA GRUPPI ----
 async function loadGroups() {
   setStatus($("group-list-status"), "Caricamento gruppi...");
@@ -1442,7 +1491,6 @@ async function loadProfile() {
   const uid = currentUser.id;
   setStatus($("profile-status"), "");
 
-  // 1. Dati profilo (con fallback se alcune colonne social non esistono)
   let profile = null;
   const profRes = await sb
     .from("profiles")
@@ -1461,7 +1509,6 @@ async function loadProfile() {
     profile = profRes.data || {};
   }
 
-  // 2. Mazzi, storico partite, partite gruppi e amici in parallelo
   const [decksRes, mpRes, friendsRes] = await Promise.all([
     sb.from("decks").select("id, name, type, format").eq("owner_id", uid),
     sb.from("match_players").select("is_winner").eq("user_id", uid),
@@ -1483,7 +1530,6 @@ async function loadProfile() {
     histRows = hRes.data || [];
   }
 
-  // Calcolo statistiche come nell'app desktop
   const byDeck = {};
   let personalMatches = 0;
   let personalWins = 0;
@@ -1534,7 +1580,6 @@ async function loadProfile() {
     (f) => f.status === "pending" && f.addressee_id === uid
   ).length;
 
-  // Rendering intestazione
   const nickname = (profile.nickname || "").trim() || (currentUser.email || "Giocatore").split("@")[0];
   $("profile-nickname").textContent = nickname;
   $("profile-email").textContent = currentUser.email || "";
@@ -1559,7 +1604,6 @@ async function loadProfile() {
   const bio = (profile.bio || "").trim();
   $("profile-bio").textContent = bio || "Nessuna bio impostata.";
 
-  // Rendering KPI
   $("kpi-winrate").textContent = totalMatches > 0 ? `${globalWr.toFixed(1)}%` : "—";
   $("kpi-winrate-sub").textContent = `${totalWins}V / ${totalMatches}P`;
 
@@ -1576,7 +1620,6 @@ async function loadProfile() {
   $("profile-fav-deck-name").textContent = favDeckName;
   $("profile-fav-deck-sub").textContent = favDeckSub;
 
-  // Rendering Vetrina Carte Preferite
   const flexGrid = $("profile-flex-grid");
   const favCards = Array.isArray(profile.favorite_cards)
     ? profile.favorite_cards.filter((c) => c && (c.name || c.image_url))
