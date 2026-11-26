@@ -289,7 +289,7 @@ document.querySelectorAll(".nav-btn").forEach((btn) => {
     } else {
       document.body.classList.remove("scanner-mode");
       stopScannerSession();
-      if (targetTab === "tab-profile") {
+      if (targetTab === "tab-profile" && typeof loadProfile === "function") {
         await loadProfile();
       }
     }
@@ -298,8 +298,8 @@ document.querySelectorAll(".nav-btn").forEach((btn) => {
 
 // Login
 $("btn-login")?.addEventListener("click", async () => {
-  const email = $("email").value.trim();
-  const password = $("password").value;
+  const email = ($("email")?.value || "").trim();
+  const password = $("password")?.value || "";
   setStatus($("login-status"), "Accesso in corso...");
 
   const { data, error } = await sb.auth.signInWithPassword({ email, password });
@@ -308,7 +308,7 @@ $("btn-login")?.addEventListener("click", async () => {
     return;
   }
   currentUser = data.user;
-  onAuthenticated();
+  await onAuthenticated();
 });
 
 $("btn-logout")?.addEventListener("click", async () => {
@@ -325,7 +325,12 @@ $("btn-logout")?.addEventListener("click", async () => {
 async function onAuthenticated() {
   $("login-view")?.classList.add("hidden");
   $("main-view")?.classList.remove("hidden");
-  await Promise.all([loadDecks(), loadGroups(), loadProfile()]);
+  if ($("user-badge") && currentUser?.email) {
+    $("user-badge").textContent = currentUser.email;
+  }
+  const tasks = [loadDecks(), loadGroups()];
+  if (typeof loadProfile === "function") tasks.push(loadProfile());
+  await Promise.all(tasks);
 }
 
 function formatSortKey(deck) {
