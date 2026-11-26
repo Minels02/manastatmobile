@@ -614,12 +614,184 @@ function renderWinLossPie(wins, losses) {
   `;
 }
 
+let trendChartPoints = [];
+let selectedTrendIdx = -1;
+
+function formatShortDateIt(ymd) {
+  const parts = String(ymd || "").slice(0, 10).split("-");
+  if (parts.length !== 3) return ymd;
+  return `${parts[2]}/${parts[1]}`;
+}
+
+function formatFullDateIt(ymd) {
+  const parts = String(ymd || "").slice(0, 10).split("-");
+  if (parts.length !== 3) return ymd;
+  return `${parts[2]}/${parts[1]}/${parts[0]}`;
+}
+
+function updateTrendDetailBar(idx) {
+  const bar = $("deck-trend-detail");
+  if (!bar) return;
+  const p = trendChartPoints[idx];
+  if (!p) {
+    bar.innerHTML = `<span class="muted">Nessun dato nel periodo</span>`;
+    return;
+  }
+  const dayWr = p.dayM > 0 ? Math.round((p.dayW / p.dayM) * 100) : 0;
+  bar.innerHTML = `
+    <span><strong>${escapeHtml(formatFullDateIt(p.day))}</strong> · Giorno: ${p.dayW}/${p.dayM} (${dayWr}%)</span>
+    <span class="trend-detail-wr">Tot: ${Math.round(p.wr)}%</span>
+  `;
+}
+
+window.selectTrendPoint = function (idx) {
+  if (idx < 0 || idx >= trendChartPoints.length) return;
+  selectedTrendIdx = idx;
+  renderWinrateTrendSvg();
+  updateTrendDetailBar(idx);
+};
+
 function renderWinrateTrend() {
   const box = $("deck-trend-container");
+  const bar = $("deck-trend-detail");
   if (!currentDeckHistory.length) {
+    trendChartPoints = [];
+    selectedTrendIdx = -1;
+    if (bar) bar.innerHTML = `<span class="muted">Registra almeno una sessione</span>`;
     box.innerHTML = `<p class="muted">Registra almeno una sessione per vedere l'andamento.</p>`;
     return;
   }
+
+  const byDay = new Map();
+  for (const r of currentDeckHistory) {
+    const day = String(r.played_on || "").slice(0, 10);
+    if (!day) continue;
+    const prev = byDay.get(day) || { m: 0, w: 0 };
+    const m = Math.max(0, Number(r.match || 0));
+    const w = Math.max(0, Math.min(Number(r.win || 0), m));
+    byDay.set(day, { m: prev.m + m, w: prev.w + w });
+  }
+
+  const days = Array.from(byDay.keys()).sort();
+  let cumM = 0;
+  let cumW = 0;
+  trendChartPoints = days.map((day) => {
+    const d = byDay.get(day);
+    cumM += d.m;
+    cumW += d.w;
+    return {
+      day,
+      dayM: d.m,
+      dayW: d.w,
+      cumM,
+      cumW,
+      wr: cumM > 0 ? (cumW / cumM) * 100 : 0,
+    };
+  });
+
+  selectedTrendIdx = trendChartPoints.length - 1;
+  renderWinrateTrendSvg();
+  updateTrendDetailBar(selectedTrendIdx);
+}
+
+function renderWinrateTrendSvg() {
+  const box = $("deck-trend-container");
+  const points = trendChartPoints;
+  if (!points.length) return;
+
+  const W = 340;
+  const H = 165;
+  const padL = 34;
+  const padR = 16;
+  const padT = 14;
+  const padB = 28;
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
+
+  const coords = points.map((p, i) => {
+    const x = points.length === 1 ? padL + plotW / 2 : padL + (i / (points.length - 1)) * plotW;
+    const y = padT + plotH - (p.wr / 100) * plotH;
+    return { x, y, ...p };
+  });
+
+  // Griglia orizzontale 0, 25, 50, 75, 100%
+  const gridHtml = [0, 25, 50, 75, 100]
+    .map((pct) => {
+      const y = padT + plotH - (pct / 100) * plotH;
+      const dash = pct === 50 ? `stroke-dasharray="4,3" stroke="rgba(148,163,184,0.35)"` : `stroke="rgba(255,255,255,0.08)"`;
+      return `
+        <line x1="${padL}" y1="${y.toFixed(1)}" x2="${W - padR}" y2="${y.toFixed(1)}" ${dash} />
+        <text x="${padL - 5}" y="${(y + 3).toFixed(1)}" text-anchor="end" fill="#64748b" font-size="9">${pct}%</text>
+      `;
+    })
+    .join("");
+
+  // Etichette asse X ben distribuite (max 5 etichette, mai sovrapposte)
+  const labelIndices = new Set([0, points.length - 1]);
+  if (points.length > 2) {
+    const maxLabels = Math.min(5, points.length);
+    const step = (points.length - 1) / (maxLabels - 1);
+    for (let k = 1; k < maxLabels - 1; k++) {
+      labelIndices.add(Math.round(k * step));
+    }
+  }
+  let lastLabelX = -999;
+  const xLabelsHtml = Array.from(labelIndices)
+    .sort((a, b) => a - b)
+    .map((i) => {
+      const c = coords[i];
+      if (c.x - lastLabelX < 42 && i !== points.length - 1) return "";
+      lastLabelX = c.x;
+      const anchor = i === 0 ? "start" : i === points.length - 1 ? "end" : "middle";
+      return `<text x="${c.x.toFixed(1)}" y="${H - 6}" text-anchor="${anchor}" fill="#94a3b8" font-size="9.5">${escapeHtml(formatShortDateIt(c.day))}</text>`;
+    })
+    .join("");
+
+  const polyline = coords.map((c) => `${c.x.toFixed(1)},${c.y.toFixed(1)}`).join(" ");
+  const areaPath =
+    points.length > 1
+      ? `M ${coords[0].x.toFixed(1)},${(padT + plotH).toFixed(1)} L ${coords
+          .map((c) => `${c.x.toFixed(1)},${c.y.toFixed(1)}`)
+          .join(" L ")} L ${coords[coords.length - 1].x.toFixed(1)},${(padT + plotH).toFixed(1)} Z`
+      : "";
+
+  const selectedC = coords[selectedTrendIdx];
+  const guideLine = selectedC
+    ? `<line x1="${selectedC.x.toFixed(1)}" y1="${padT}" x2="${selectedC.x.toFixed(1)}" y2="${padT + plotH}" stroke="rgba(56,189,248,0.45)" stroke-dasharray="3,3" />`
+    : "";
+
+  const dotsHtml = coords
+    .map((c, i) => {
+      const isSel = i === selectedTrendIdx;
+      const r = isSel ? 5.5 : 3.5;
+      const fill = isSel ? "#ffffff" : "#22c55e";
+      const stroke = isSel ? "#38bdf8" : "#0f172a";
+      return `
+        <g onclick="selectTrendPoint(${i})" style="cursor:pointer;">
+          <circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="14" fill="transparent"></circle>
+          <circle cx="${c.x.toFixed(1)}" cy="${c.y.toFixed(1)}" r="${r}" fill="${fill}" stroke="${stroke}" stroke-width="2"></circle>
+        </g>
+      `;
+    })
+    .join("");
+
+  box.innerHTML = `
+    <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;">
+      <defs>
+        <linearGradient id="wrAreaGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#22c55e" stop-opacity="0.32" />
+          <stop offset="100%" stop-color="#22c55e" stop-opacity="0.02" />
+        </linearGradient>
+      </defs>
+      ${gridHtml}
+      ${areaPath ? `<path d="${areaPath}" fill="url(#wrAreaGrad)" />` : ""}
+      ${points.length > 1 ? `<polyline fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" points="${polyline}" />` : ""}
+      ${guideLine}
+      ${dotsHtml}
+      ${xLabelsHtml}
+    </svg>
+  `;
+}
 
   // Raggruppa per giorno e calcola winrate cumulativo
   const byDay = new Map();
@@ -747,15 +919,78 @@ $("btn-save-deck-match").addEventListener("click", async () => {
   await loadDeckHistory(selectedDeckId);
 });
 
-// ---- LISTA CARTE & CURVA DI MANA ----
+// ---- ICONE SVG MAGIC, LISTA CARTE, RICERCA & CONTATORI ----
+let deckSearchResults = [];
+let deckSearchTimer = null;
+
+function manaSymbolToSvgUrl(sym) {
+  const clean = String(sym || "").toUpperCase().replaceAll("/", "");
+  return `https://svgs.scryfall.io/card-symbols/${encodeURIComponent(clean)}.svg`;
+}
+
+function renderManaPipsHtml(manaCost) {
+  const raw = String(manaCost || "");
+  const tokens = raw.match(/\{([^}]+)\}/g) || [];
+  return tokens
+    .map((t) => {
+      const sym = t.slice(1, -1).toUpperCase();
+      const url = manaSymbolToSvgUrl(sym);
+      return `<img class="mana-svg" src="${url}" alt="{${escapeHtml(sym)}}" loading="lazy" />`;
+    })
+    .join("");
+}
+
+function extractCommanderColorIdentity(cards) {
+  const order = ["W", "U", "B", "R", "G"];
+  const commanders = (cards || []).filter((c) => c && c.is_commander);
+  if (!commanders.length) return [];
+
+  const found = new Set();
+  for (const cmd of commanders) {
+    if (Array.isArray(cmd.color_identity)) {
+      cmd.color_identity.forEach((col) => {
+        const u = String(col || "").toUpperCase();
+        if (order.includes(u)) found.add(u);
+      });
+    } else {
+      const txt = `${cmd.mana_cost || ""} ${cmd.oracle_text || ""}`;
+      const tokens = txt.match(/\{([^}]+)\}/g) || [];
+      for (const t of tokens) {
+        for (const ch of t.slice(1, -1).toUpperCase()) {
+          if (order.includes(ch)) found.add(ch);
+        }
+      }
+    }
+  }
+  const ordered = order.filter((c) => found.has(c));
+  return ordered.length ? ordered : ["C"];
+}
+
+function updateDeckCommanderCiUi() {
+  const ci = extractCommanderColorIdentity(currentDeckCards);
+  const ciEl = $("deck-detail-ci");
+  if (ciEl) {
+    ciEl.innerHTML = ci
+      .map((sym) => `<img class="mana-svg" src="${manaSymbolToSvgUrl(sym)}" alt="${sym}" />`)
+      .join("");
+  }
+  const filterWrap = $("deck-ci-filter-wrap");
+  if (filterWrap) {
+    filterWrap.classList.toggle("hidden", ci.length === 0);
+  }
+}
+
 async function loadDeckCards(deck) {
   setStatus($("deck-cards-status"), "Caricamento lista...");
   $("deck-cards-list").innerHTML = "";
+  $("deck-search-results").innerHTML = "";
+  setStatus($("deck-search-status"), "");
+  if ($("deck-card-search-input")) $("deck-card-search-input").value = "";
 
   let cards = [];
   const { data, error } = await sb
     .from("deck_cards")
-    .select("id, name, type_line, mana_cost, image_url, quantity, is_commander, scryfall_id")
+    .select("id, name, type_line, oracle_text, mana_cost, image_url, quantity, is_commander, scryfall_id")
     .eq("deck_id", deck.id);
 
   if (!error && Array.isArray(data) && data.length > 0) {
@@ -765,44 +1000,36 @@ async function loadDeckCards(deck) {
   }
 
   currentDeckCards = cards;
-  const totalCount = cards.reduce((acc, c) => acc + Math.max(1, Number(c.quantity || 1)), 0);
-  $("deck-detail-count").textContent = totalCount > 0 ? `${totalCount} carte` : "";
-
+  updateDeckCardCountAndCi();
   setStatus($("deck-cards-status"), "");
-  renderManaCurve(cards);
   renderDeckCardsList(cards);
 }
 
-function parseCmcFromManaCost(manaCost) {
-  const raw = String(manaCost || "");
-  if (!raw) return 0;
-  const tokens = raw.match(/\{([^}]+)\}/g) || [];
-  let cmc = 0;
-  for (const t of tokens) {
-    const sym = t.slice(1, -1).toUpperCase();
-    if (/^\d+$/.test(sym)) cmc += parseInt(sym, 10);
-    else if (sym === "X" || sym === "Y" || sym === "Z") cmc += 0;
-    else cmc += 1;
-  }
-  return cmc;
+function updateDeckCardCountAndCi() {
+  const totalCount = currentDeckCards.reduce((acc, c) => acc + Math.max(1, Number(c.quantity || 1)), 0);
+  $("deck-detail-count").textContent = totalCount > 0 ? `${totalCount} carte` : "";
+  updateDeckCommanderCiUi();
 }
 
-function renderManaPipsHtml(manaCost) {
-  const raw = String(manaCost || "");
-  const tokens = raw.match(/\{([^}]+)\}/g) || [];
-  return tokens
-    .map((t) => {
-      const sym = t.slice(1, -1).toUpperCase();
-      let cls = "mana-num";
-      if (sym === "W") cls = "mana-w";
-      else if (sym === "U") cls = "mana-u";
-      else if (sym === "B") cls = "mana-b";
-      else if (sym === "R") cls = "mana-r";
-      else if (sym === "G") cls = "mana-g";
-      else if (sym === "C") cls = "mana-c";
-      return `<span class="mana-pip ${cls}">${escapeHtml(sym)}</span>`;
-    })
-    .join("");
+async function syncDeckCardsJson(deckId) {
+  const deck = myDecks.find((d) => String(d.id) === String(deckId));
+  if (deck) {
+    deck.cards_json = currentDeckCards.map((c) => ({
+      scryfall_id: c.scryfall_id || "",
+      name: c.name || "",
+      type_line: c.type_line || "",
+      oracle_text: c.oracle_text || "",
+      mana_cost: c.mana_cost || "",
+      image_url: c.image_url || "",
+      quantity: Math.max(1, Number(c.quantity || 1)),
+      is_commander: Boolean(c.is_commander),
+    }));
+    try {
+      await sb.from("decks").update({ cards_json: deck.cards_json }).eq("id", deckId);
+    } catch {
+      // ignora se la colonna non è presente
+    }
+  }
 }
 
 function getCardCategory(card) {
@@ -819,47 +1046,10 @@ function getCardCategory(card) {
   return "Altro";
 }
 
-function renderManaCurve(cards) {
-  const buckets = [0, 0, 0, 0, 0, 0, 0]; // 0,1,2,3,4,5,6+
-  let nonLandCount = 0;
-  let cmcSum = 0;
-
-  for (const c of cards) {
-    const tl = String(c.type_line || "").toLowerCase();
-    if (tl.includes("land") && !tl.includes("creature")) continue;
-    const qty = Math.max(1, Number(c.quantity || 1));
-    const cmc = parseCmcFromManaCost(c.mana_cost);
-    const idx = Math.min(6, Math.max(0, Math.floor(cmc)));
-    buckets[idx] += qty;
-    nonLandCount += qty;
-    cmcSum += cmc * qty;
-  }
-
-  const avg = nonLandCount > 0 ? (cmcSum / nonLandCount).toFixed(2) : "—";
-  $("deck-avg-cmc").textContent = `CMC ${avg}`;
-
-  const maxVal = Math.max(1, ...buckets);
-  const labels = ["0", "1", "2", "3", "4", "5", "6+"];
-  $("deck-mana-curve").innerHTML = buckets
-    .map((val, i) => {
-      const hPct = Math.round((val / maxVal) * 100);
-      return `
-        <div class="curve-col">
-          <span class="curve-count">${val || ""}</span>
-          <div class="curve-bar-wrap">
-            <div class="curve-bar" style="height:${val ? Math.max(8, hPct) : 2}%;"></div>
-          </div>
-          <span class="curve-label">${labels[i]}</span>
-        </div>
-      `;
-    })
-    .join("");
-}
-
 function renderDeckCardsList(cards) {
   const container = $("deck-cards-list");
   if (!cards.length) {
-    container.innerHTML = `<p class="muted">Nessuna carta salvata sul cloud per questo mazzo.</p>`;
+    container.innerHTML = `<p class="muted">Nessuna carta nel mazzo. Usa la ricerca qui sopra per aggiungerle.</p>`;
     return;
   }
 
@@ -883,15 +1073,20 @@ function renderDeckCardsList(cards) {
       const rows = list
         .map((c) => {
           const qty = Math.max(1, Number(c.quantity || 1));
-          const qtyHtml = qty > 1 ? `<span class="deck-card-qty">${qty}x</span>` : "";
           const crown = c.is_commander ? "👑 " : "";
           return `
-            <div class="deck-card-row" onclick="openCardPreview(${c._idx})">
-              <div class="deck-card-left">
-                ${qtyHtml}
+            <div class="deck-card-row">
+              <div class="deck-card-left" onclick="openCardPreview(${c._idx})">
                 <span class="deck-card-name">${crown}${escapeHtml(c.name || "")}</span>
               </div>
-              <div class="deck-card-mana">${renderManaPipsHtml(c.mana_cost)}</div>
+              <div class="deck-card-right">
+                <div class="deck-card-mana">${renderManaPipsHtml(c.mana_cost)}</div>
+                <div class="deck-qty-controls">
+                  <button type="button" class="deck-qty-btn" onclick="changeDeckCardQty(${c._idx}, -1)">−</button>
+                  <span class="deck-qty-num">${qty}</span>
+                  <button type="button" class="deck-qty-btn" onclick="changeDeckCardQty(${c._idx}, 1)">+</button>
+                </div>
+              </div>
             </div>
           `;
         })
@@ -906,6 +1101,162 @@ function renderDeckCardsList(cards) {
     })
     .join("");
 }
+
+window.changeDeckCardQty = async function (cardIdx, delta) {
+  const card = currentDeckCards[cardIdx];
+  if (!card || !selectedDeckId) return;
+
+  const curQty = Math.max(1, Number(card.quantity || 1));
+  const newQty = curQty + delta;
+
+  if (newQty <= 0) {
+    if (!confirm(`Rimuovere "${card.name}" dal mazzo?`)) return;
+    if (card.id) {
+      const { error } = await sb.from("deck_cards").delete().eq("id", card.id);
+      if (error) {
+        setStatus($("deck-cards-status"), error.message, "err");
+        return;
+      }
+    }
+    currentDeckCards.splice(cardIdx, 1);
+  } else {
+    card.quantity = newQty;
+    if (card.id) {
+      const { error } = await sb.from("deck_cards").update({ quantity: newQty }).eq("id", card.id);
+      if (error) {
+        setStatus($("deck-cards-status"), error.message, "err");
+        return;
+      }
+    }
+  }
+
+  updateDeckCardCountAndCi();
+  renderDeckCardsList(currentDeckCards);
+  await syncDeckCardsJson(selectedDeckId);
+};
+
+// ---- RICERCA & AGGIUNTA CARTE DA SCRYFALL ----
+async function performDeckCardSearch() {
+  const input = $("deck-card-search-input");
+  const rawQuery = (input?.value || "").trim();
+  const resBox = $("deck-search-results");
+
+  if (rawQuery.length < 2) {
+    deckSearchResults = [];
+    resBox.innerHTML = "";
+    setStatus($("deck-search-status"), "");
+    return;
+  }
+
+  let q = rawQuery;
+  const ci = extractCommanderColorIdentity(currentDeckCards);
+  if (ci.length > 0 && $("deck-ci-filter-chk")?.checked) {
+    const ciToken = ci.join("").toLowerCase();
+    q = `${rawQuery} id<=${ciToken}`;
+  }
+
+  setStatus($("deck-search-status"), "Ricerca su Scryfall...");
+  try {
+    const resp = await fetch(
+      `https://api.scryfall.com/cards/search?q=${encodeURIComponent(q)}&unique=cards`
+    );
+    if (!resp.ok) {
+      deckSearchResults = [];
+      resBox.innerHTML = "";
+      setStatus($("deck-search-status"), "Nessuna carta trovata.");
+      return;
+    }
+    const json = await resp.json();
+    deckSearchResults = (json.data || []).slice(0, 12);
+    setStatus($("deck-search-status"), "");
+
+    resBox.innerHTML = deckSearchResults
+      .map((c, i) => {
+        const mc = c.mana_cost || c.card_faces?.[0]?.mana_cost || "";
+        return `
+          <div class="deck-search-item">
+            <div class="deck-search-item-info">
+              <div class="deck-search-item-name">${escapeHtml(c.name || "")}</div>
+              <div class="deck-search-item-sub">
+                <span>${renderManaPipsHtml(mc)}</span>
+                <span>${escapeHtml((c.type_line || "").split("—")[0].trim())}</span>
+              </div>
+            </div>
+            <button type="button" class="deck-add-btn" onclick="addCardToCurrentDeck(${i})">Aggiungi</button>
+          </div>
+        `;
+      })
+      .join("");
+  } catch {
+    setStatus($("deck-search-status"), "Errore di connessione a Scryfall.", "err");
+  }
+}
+
+$("btn-deck-card-search")?.addEventListener("click", performDeckCardSearch);
+$("deck-card-search-input")?.addEventListener("input", () => {
+  clearTimeout(deckSearchTimer);
+  deckSearchTimer = setTimeout(performDeckCardSearch, 350);
+});
+$("deck-ci-filter-chk")?.addEventListener("change", () => {
+  if (($("deck-card-search-input")?.value || "").trim().length >= 2) {
+    performDeckCardSearch();
+  }
+});
+
+window.addCardToCurrentDeck = async function (resultIdx) {
+  const sc = deckSearchResults[resultIdx];
+  if (!sc || !selectedDeckId) return;
+
+  const existingIdx = currentDeckCards.findIndex(
+    (c) =>
+      (sc.id && c.scryfall_id === sc.id) ||
+      String(c.name || "").toLowerCase() === String(sc.name || "").toLowerCase()
+  );
+
+  if (existingIdx !== -1) {
+    await changeDeckCardQty(existingIdx, 1);
+    setStatus($("deck-search-status"), `Aumentata quantità di ${sc.name}.`, "ok");
+    return;
+  }
+
+  const imageUrl =
+    sc.image_uris?.normal ||
+    sc.card_faces?.[0]?.image_uris?.normal ||
+    sc.image_uris?.art_crop ||
+    "";
+  const manaCost = sc.mana_cost || sc.card_faces?.[0]?.mana_cost || "";
+  const oracleText = sc.oracle_text || sc.card_faces?.[0]?.oracle_text || "";
+
+  const newRow = {
+    deck_id: selectedDeckId,
+    scryfall_id: sc.id || "",
+    name: sc.name || "",
+    type_line: sc.type_line || "",
+    oracle_text: oracleText,
+    mana_cost: manaCost,
+    image_url: imageUrl,
+    quantity: 1,
+    is_commander: false,
+  };
+
+  setStatus($("deck-search-status"), `Aggiunta di ${sc.name}...`);
+  const { data: inserted, error } = await sb
+    .from("deck_cards")
+    .insert(newRow)
+    .select("id, name, type_line, oracle_text, mana_cost, image_url, quantity, is_commander, scryfall_id")
+    .single();
+
+  if (error) {
+    setStatus($("deck-search-status"), error.message, "err");
+    return;
+  }
+
+  currentDeckCards.push(inserted || newRow);
+  updateDeckCardCountAndCi();
+  renderDeckCardsList(currentDeckCards);
+  await syncDeckCardsJson(selectedDeckId);
+  setStatus($("deck-search-status"), `${sc.name} aggiunta al mazzo!`, "ok");
+};
 
 window.openCardPreview = async function (cardIdx) {
   const card = currentDeckCards[cardIdx];
@@ -934,7 +1285,7 @@ window.openCardPreview = async function (cardIdx) {
   if (url) imgEl.src = url;
 };
 
-$("btn-close-card-preview").addEventListener("click", () => {
+$("btn-close-card-preview")?.addEventListener("click", () => {
   $("card-preview-modal").classList.add("hidden");
 });
 
