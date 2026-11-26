@@ -31,7 +31,7 @@
       <section id="tab-decks" class="tab-panel active">
         <div id="decks-list-view" class="card">
           <h2>I tuoi mazzi</h2>
-          <p class="muted">Tocca un mazzo per aprire la sua scheda e segnare una partita.</p>
+          <p class="muted">Tocca un mazzo per vedere statistiche, lista carte e partite.</p>
           <div id="decks-list-container" class="deck-cards-list"></div>
           <p id="deck-list-status" class="status"></p>
         </div>
@@ -39,7 +39,7 @@
         <div id="deck-detail-view" class="hidden">
           <div class="detail-header">
             <button id="btn-back-to-decks" class="btn back-btn">← Tutti i mazzi</button>
-            <span class="muted">Scheda mazzo</span>
+            <span id="deck-detail-count" class="muted"></span>
           </div>
 
           <div id="deck-detail-hero" class="detail-hero">
@@ -49,24 +49,97 @@
             </div>
           </div>
 
-          <div class="card">
-            <h3>Registra partita</h3>
-            <div class="row-2">
-              <div>
-                <label>Partite giocate</label>
-                <input id="deck-matches" type="number" min="1" value="1" />
+          <!-- SOTTO-TAB DEL MAZZO -->
+          <div class="deck-subtabs" role="tablist">
+            <button type="button" class="deck-subtab-btn active" data-subtab="deck-sub-stats">Statistiche</button>
+            <button type="button" class="deck-subtab-btn" data-subtab="deck-sub-cards">Lista</button>
+            <button type="button" class="deck-subtab-btn" data-subtab="deck-sub-matches">Partite</button>
+          </div>
+
+          <!-- SOTTO-TAB 1: STATISTICHE -->
+          <div id="deck-sub-stats" class="deck-subpanel active">
+            <div class="deck-kpi-grid">
+              <div class="kpi-card">
+                <div class="kpi-label">Winrate</div>
+                <div id="deck-kpi-winrate" class="kpi-value">—</div>
               </div>
-              <div>
-                <label>Vittorie</label>
-                <input id="deck-wins" type="number" min="0" value="0" />
+              <div class="kpi-card">
+                <div class="kpi-label">Partite</div>
+                <div id="deck-kpi-matches" class="kpi-value">0</div>
+              </div>
+              <div class="kpi-card">
+                <div class="kpi-label">Vittorie</div>
+                <div id="deck-kpi-wins" class="kpi-value kpi-win">0</div>
+              </div>
+              <div class="kpi-card">
+                <div class="kpi-label">Sconfitte</div>
+                <div id="deck-kpi-losses" class="kpi-value kpi-loss">0</div>
               </div>
             </div>
 
-            <label>Data</label>
-            <input id="deck-date" type="date" />
+            <div class="card">
+              <h3>Vittorie / Sconfitte</h3>
+              <div id="deck-pie-container" class="deck-chart-box"></div>
+            </div>
 
-            <button id="btn-save-deck-match" class="btn primary">Salva partita su mazzo</button>
-            <p id="deck-status" class="status"></p>
+            <div class="card">
+              <h3>Andamento Winrate nel tempo</h3>
+              <div id="deck-trend-container" class="deck-chart-box"></div>
+            </div>
+          </div>
+
+          <!-- SOTTO-TAB 2: LISTA CARTE -->
+          <div id="deck-sub-cards" class="deck-subpanel hidden">
+            <div class="card">
+              <div class="deck-curve-header">
+                <h3>Curva di Mana</h3>
+                <span id="deck-avg-cmc" class="badge">CMC —</span>
+              </div>
+              <div id="deck-mana-curve" class="mana-curve-bars"></div>
+            </div>
+
+            <div class="card">
+              <p id="deck-cards-status" class="status"></p>
+              <div id="deck-cards-list" class="deck-cards-grouped"></div>
+            </div>
+          </div>
+
+          <!-- SOTTO-TAB 3: PARTITE & STORICO -->
+          <div id="deck-sub-matches" class="deck-subpanel hidden">
+            <div class="card">
+              <h3>Registra partita</h3>
+              <div class="row-2">
+                <div>
+                  <label>Partite giocate</label>
+                  <input id="deck-matches" type="number" min="1" value="1" />
+                </div>
+                <div>
+                  <label>Vittorie</label>
+                  <input id="deck-wins" type="number" min="0" value="0" />
+                </div>
+              </div>
+
+              <label>Data</label>
+              <input id="deck-date" type="date" />
+
+              <button id="btn-save-deck-match" class="btn primary">Salva partita su mazzo</button>
+              <p id="deck-status" class="status"></p>
+            </div>
+
+            <div class="card">
+              <h3>Storico sessioni</h3>
+              <div id="deck-history-list" class="deck-history-list"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- POPUP ANTEPRIMA CARTA -->
+        <div id="card-preview-modal" class="proposal-overlay hidden">
+          <div class="proposal-card card-preview-box">
+            <img id="card-preview-img" src="" alt="Carta" class="card-preview-img" />
+            <h3 id="card-preview-name"></h3>
+            <p id="card-preview-meta" class="muted"></p>
+            <button id="btn-close-card-preview" type="button" class="btn primary">Chiudi</button>
           </div>
         </div>
       </section>
