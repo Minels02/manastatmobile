@@ -20,7 +20,7 @@ const DEFAULT_SCANNER_WS_URL = "wss://manastat-scanner-server.onrender.com/ws/sc
 const STORAGE_SETS_KEY = "manastat_scanner_selected_sets";
 
 // Badge versione sempre visibile sopra la barra di navigazione
-const APP_UI_VERSION = "v2.8";
+const APP_UI_VERSION = "v2.9";
 let connectedServerVersion = "";
 
 function renderVersionBadge() {
@@ -89,16 +89,20 @@ const PREFERRED_FORMATS = [
 ];
 
 const DEFAULT_TAG_PRESETS = [
-  "Ramp",
-  "Draw",
-  "Removal",
-  "Board Wipe",
-  "Tutor",
-  "Protection",
-  "Finisher",
-  "Synergy",
+  "#ramp",
+  "#draw",
+  "#removal",
+  "#board-wipe",
+  "#tutor",
+  "#protection",
+  "#finisher",
+  "#synergy",
 ];
 
+function normalizeTag(raw) {
+  const s = String(raw || "").trim().replace(/\s+/g, "-").replace(/^#+/, "").trim();
+  return s ? `#${s.toLowerCase()}` : "";
+}
 function setStatus(el, msg, type = "") {
   if (!el) return;
   el.textContent = msg;
@@ -1209,43 +1213,91 @@ function mergeDeckCardsWithJson(dbRows, jsonRows) {
     }
   }
 
+  const normalizeTagsList = (rawTags) => {
+    const arr = Array.isArray(rawTags) ? rawTags : [];
+    return Array.from(new Set(arr.map(normalizeTag).filter(Boolean)));
+  };
+
   if (Array.isArray(dbRows) && dbRows.length > 0) {
     return dbRows.map((r) => {
       const meta =
         (r.scryfall_id && jsonById.get(String(r.scryfall_id))) ||
         (r.name && jsonByName.get(String(r.name).toLowerCase())) ||
         {};
+      const setCode = String(meta.set || meta.set_code || "").trim().toLowerCase();
       return {
         ...meta,
         ...r,
         card_image_url: meta.card_image_url || toNormalCardUrl(r.image_url || ""),
         color_identity: Array.isArray(meta.color_identity) ? meta.color_identity : [],
-        set_code: (meta.set_code || meta.set || "").toUpperCase(),
+        set: setCode,
+        set_code: setCode.toUpperCase(),
         set_name: meta.set_name || "",
         collector_number: meta.collector_number || "",
+        foil: Boolean(meta.foil),
         price_eur: meta.price_eur ?? null,
         is_proxy: Boolean(meta.is_proxy ?? meta.proxy),
-        tags: Array.isArray(meta.tags) ? meta.tags.map((t) => String(t).trim()).filter(Boolean) : [],
+        tags: normalizeTagsList(meta.tags),
       };
     });
   }
 
   if (Array.isArray(jsonRows) && jsonRows.length > 0) {
-    return jsonRows.map((jc) => ({
-      ...jc,
-      card_image_url: jc.card_image_url || toNormalCardUrl(jc.image_url || ""),
-      color_identity: Array.isArray(jc.color_identity) ? jc.color_identity : [],
-      set_code: (jc.set_code || jc.set || "").toUpperCase(),
-      set_name: jc.set_name || "",
-      collector_number: jc.collector_number || "",
-      price_eur: jc.price_eur ?? null,
-      is_proxy: Boolean(jc.is_proxy ?? jc.proxy),
-      tags: Array.isArray(jc.tags) ? jc.tags.map((t) => String(t).trim()).filter(Boolean) : [],
-    }));
+    return jsonRows.map((jc) => {
+      const setCode = String(jc.set || jc.set_code || "").trim().toLowerCase();
+      return {
+        ...jc,
+        card_image_url: jc.card_image_url || toNormalCardUrl(jc.image_url || ""),
+        color_identity: Array.isArray(jc.color_identity) ? jc.color_identity : [],
+        set: setCode,
+        set_code: setCode.toUpperCase(),
+        set_name: jc.set_name || "",
+        collector_number: jc.collector_number || "",
+        foil: Boolean(jc.foil),
+        price_eur: jc.price_eur ?? null,
+        is_proxy: Boolean(jc.is_proxy ?? jc.proxy),
+        tags: normalizeTagsList(jc.tags),
+      };
+    });
   }
 
   return [];
 }
+
+async function syncDeckCardsJson(deckId) {
+  const deck = myDecks.find((d) => String(d.id) === String(deckId));
+  const payload = currentDeckCards.map((c) => {
+    const setLower = String(c.set || c.set_code || "").trim().toLowerCase();
+    return {
+      scryfall_id: c.scryfall_id || "",
+      name: c.name || "",
+      type_line: c.type_line || "",
+      oracle_text: c.oracle_text || "",
+      mana_cost: c.mana_cost || "",
+      image_url: c.image_url || "",
+      card_image_url: c.card_image_url || toNormalCardUrl(c.image_url || ""),
+      color_identity: Array.isArray(c.color_identity) ? c.color_identity : [],
+      set: setLower,
+      set_code: setLower.toUpperCase(),
+      set_name: c.set_name || "",
+      collector_number: c.collector_number || "",
+      foil: Boolean(c.foil),
+      price_eur: c.price_eur ?? null,
+      quantity: Math.max(1, Number(c.quantity || 1)),
+      is_commander: Boolean(c.is_commander),
+      is_proxy: Boolean(c.is_proxy),
+      tags: Array.from(new Set((Array.isArray(c.tags) ? c.tags : []).map(normalizeTag).filter(Boolean))),
+    };
+  });
+
+  if (deck) deck.cards_json = payload;
+  try {
+    await sb.from("decks").update({ cards_json: payload }).eq("id", deckId);
+  } catch {
+    // ignora se la colonna non esiste
+  }
+}
+
 
 async function loadDeckCards(deck) {
   setStatus($("deck-cards-status"), "Caricamento lista...");
@@ -1373,43 +1425,14 @@ function updateDeckTotalPriceBadge() {
   }
 }
 
+
 function updateDeckCardCountAndCi() {
   const totalCount = currentDeckCards.reduce((acc, c) => acc + Math.max(1, Number(c.quantity || 1)), 0);
   $("deck-detail-count").textContent = totalCount > 0 ? `${totalCount} carte` : "";
   updateDeckTotalPriceBadge();
   updateDeckCommanderCiUi();
 }
-
-async function syncDeckCardsJson(deckId) {
-  const deck = myDecks.find((d) => String(d.id) === String(deckId));
-  const payload = currentDeckCards.map((c) => ({
-    scryfall_id: c.scryfall_id || "",
-    name: c.name || "",
-    type_line: c.type_line || "",
-    oracle_text: c.oracle_text || "",
-    mana_cost: c.mana_cost || "",
-    image_url: c.image_url || "",
-    card_image_url: c.card_image_url || toNormalCardUrl(c.image_url || ""),
-    color_identity: Array.isArray(c.color_identity) ? c.color_identity : [],
-    set: (c.set_code || c.set || "").toUpperCase(),
-    set_code: (c.set_code || c.set || "").toUpperCase(),
-    set_name: c.set_name || "",
-    collector_number: c.collector_number || "",
-    price_eur: c.price_eur ?? null,
-    quantity: Math.max(1, Number(c.quantity || 1)),
-    is_commander: Boolean(c.is_commander),
-    is_proxy: Boolean(c.is_proxy),
-    tags: Array.isArray(c.tags) ? c.tags : [],
-  }));
-
-  if (deck) deck.cards_json = payload;
-  try {
-    await sb.from("decks").update({ cards_json: payload }).eq("id", deckId);
-  } catch {
-    // ignora se la colonna non esiste
-  }
-}
-
+  
 function getCardCategory(card) {
   if (card.is_commander) return "Comandante";
   const tl = String(card.type_line || "").toLowerCase();
@@ -1944,7 +1967,7 @@ function renderCardTagsModalUi(card) {
 
 window.addTagToActiveCard = async function (rawTag) {
   const card = currentDeckCards[activeDetailCardIdx];
-  const tag = String(rawTag || "").trim();
+  const tag = normalizeTag(rawTag);
   if (!card || !tag) return;
   if (!Array.isArray(card.tags)) card.tags = [];
   if (card.tags.some((t) => t.toLowerCase() === tag.toLowerCase())) return;
@@ -1954,7 +1977,6 @@ window.addTagToActiveCard = async function (rawTag) {
   renderDeckCardsList(currentDeckCards);
   await syncDeckCardsJson(selectedDeckId);
 };
-
 window.removeTagFromActiveCard = async function (tagIdx) {
   const card = currentDeckCards[activeDetailCardIdx];
   if (!card || !Array.isArray(card.tags)) return;
@@ -2001,6 +2023,7 @@ $("card-edition-select")?.addEventListener("change", async (e) => {
   const newPrice = extractScryfallEurPrice(pr, false);
 
   card.scryfall_id = pr.id || card.scryfall_id;
+  card.set = (pr.set || "").toLowerCase();
   card.set_code = (pr.set || "").toUpperCase();
   card.set_name = pr.set_name || "";
   card.collector_number = pr.collector_number || "";
