@@ -94,7 +94,10 @@
           <!-- SOTTO-TAB 2: LISTA CARTE -->
           <div id="deck-sub-cards" class="deck-subpanel hidden">
             <div id="deck-search-card" class="card">
-              <h3>Aggiungi carta</h3>
+              <div class="deck-search-header">
+                <h3>Aggiungi carta</h3>
+                <button id="btn-open-import-deck" type="button" class="deck-import-open-btn">Importa lista</button>
+              </div>
               <div class="deck-search-row">
                 <input
                   id="deck-card-search-input"
@@ -213,6 +216,38 @@
             <p id="change-cmd-status" class="status"></p>
             <div id="change-cmd-results" class="deck-search-grid"></div>
             <button id="btn-close-cmd-modal" type="button" class="btn" style="margin-top:10px;">Chiudi</button>
+          </div>
+        </div>
+        <!-- MODAL: IMPORTA LISTA MAZZO -->
+        <div id="import-deck-modal" class="proposal-overlay hidden">
+          <div class="proposal-card modal-scroll-card">
+            <h2>Importa lista mazzo</h2>
+            <p class="muted" style="margin-top:0;">
+              Incolla una lista da Moxfield, Archidekt, ManaBox o testo semplice (es. <code>1 Sol Ring</code> o <code>1 Sol Ring (CMM) 410</code>).
+            </p>
+            <textarea
+              id="import-deck-textarea"
+              class="import-textarea"
+              rows="9"
+              placeholder="Commander&#10;1 Atraxa, Praetors' Voice&#10;&#10;Deck&#10;1 Sol Ring&#10;1 Arcane Signet&#10;..."
+            ></textarea>
+
+            <div class="import-mode-row">
+              <label class="import-radio">
+                <input type="radio" name="import-deck-mode" value="merge" checked />
+                <span>Aggiungi alla lista</span>
+              </label>
+              <label class="import-radio">
+                <input type="radio" name="import-deck-mode" value="replace" />
+                <span>Sostituisci lista</span>
+              </label>
+            </div>
+
+            <p id="import-deck-status" class="status"></p>
+            <div class="proposal-actions">
+              <button id="btn-cancel-import-deck" type="button" class="btn">Annulla</button>
+              <button id="btn-run-import-deck" type="button" class="btn primary">Importa</button>
+            </div>
           </div>
         </div>
 
@@ -441,6 +476,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="app.js?v=12"></script>
+  <script src="app.js?v=13"></script>
 </body>
 </html>
