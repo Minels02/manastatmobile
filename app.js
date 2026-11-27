@@ -20,7 +20,7 @@ const DEFAULT_SCANNER_WS_URL = "wss://manastat-scanner-server.onrender.com/ws/sc
 const STORAGE_SETS_KEY = "manastat_scanner_selected_sets";
 
 // Badge versione sempre visibile sopra la barra di navigazione
-const APP_UI_VERSION = "v2.9";
+const APP_UI_VERSION = "v3.0";
 let connectedServerVersion = "";
 
 function renderVersionBadge() {
@@ -102,6 +102,175 @@ const DEFAULT_TAG_PRESETS = [
 function normalizeTag(raw) {
   const s = String(raw || "").trim().replace(/\s+/g, "-").replace(/^#+/, "").trim();
   return s ? `#${s.toLowerCase()}` : "";
+}
+function extractManaCostFromScryfall(sc) {
+  const direct = String(sc?.mana_cost || "").trim();
+  if (direct) return direct;
+  if (Array.isArray(sc?.card_faces)) {
+    return sc.card_faces
+      .map((f) => String(f?.mana_cost || "").trim())
+      .filter(Boolean)
+      .join(" // ");
+  }
+  return "";
+}
+
+function extractOracleTextFromScryfall(sc) {
+  const direct = String(sc?.oracle_text || "").trim();
+  if (direct) return direct;
+  if (Array.isArray(sc?.card_faces)) {
+    return sc.card_faces
+      .map((f) => String(f?.oracle_text || "").trim())
+      .filter(Boolean)
+      .join("\n//\n");
+  }
+  return "";
+}
+
+function resolveCardColorIdentity(card) {
+  const order = ["W", "U", "B", "R", "G"];
+  if (!card || typeof card !== "object") return [];
+
+  if (Array.isArray(card.color_identity) && card.color_identity.length > 0) {
+    const found = new Set(
+      card.color_identity.map((c) => String(c || "").toUpperCase()).filter((c) => order.includes(c))
+    );
+    return order.filter((c) => found.has(c));
+  }
+
+  const found = new Set();
+  if (Array.isArray(card.colors)) {
+    card.colors.forEach((c) => {
+      const u = String(c || "").toUpperCase();
+      if (order.includes(u)) found.add(u);
+    });
+  }
+  const txt = `${card.mana_cost || ""} ${card.oracle_text || ""}`;
+  const tokens = txt.match(/\{([^}]+)\}/g) || [];
+  for (const t of tokens) {
+    for (const ch of t.slice(1, -1).toUpperCase()) {
+      if (order.includes(ch)) found.add(ch);
+    }
+  }
+  return order.filter((c) => found.has(c));
+}
+
+// ---- CHANGELOG COMPATIBILE CON APP DESKTOP (decks.changelog_json) ----
+function parseChangeToken(token) {
+  const s = String(token || "").trim();
+  const m = s.match(/^(\d+)\s*x?\s+(.+)$/i);
+  if (m) return { name: m[2].trim(), qty: Math.max(1, parseInt(m[1], 10)) };
+  return { name: s, qty: 1 };
+}
+
+function formatCardQtyToken(cardName, qty) {
+  return qty > 1 ? `${qty}x ${cardName}` : cardName;
+}
+
+function formatLocalNowTimestamp() {
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+}
+
+function applyCardDeltaToChangelog(changelog, hist, cardName, oldQty, newQty) {
+  const cleanName = String(cardName || "").trim();
+  if (oldQty === newQty || !cleanName) {
+    return (Array.isArray(changelog) ? changelog : []).map((e) => ({ ...e }));
+  }
+
+  const logs = (Array.isArray(changelog) ? changelog : [])
+    .filter((e) => e && typeof e === "object")
+    .map((e) => ({
+      ...e,
+      added: Array.isArray(e.added) ? [...e.added] : [],
+      removed: Array.isArray(e.removed) ? [...e.removed] : [],
+      changed: Array.isArray(e.changed) ? [...e.changed] : [],
+    }));
+
+  let maxMatchDay = "";
+  for (const r of hist || []) {
+    const dStr = String(r?.played_on || "").slice(0, 10);
+    if (dStr.length === 10 && dStr > maxMatchDay) maxMatchDay = dStr;
+  }
+
+  const nowTs = formatLocalNowTimestamp();
+  const todayYmd = nowTs.slice(0, 10);
+
+  let canMergeTop = false;
+  if (logs.length > 0) {
+    const top = logs[0];
+    const topDay = String(top.timestamp || "").trim().slice(0, 10);
+    const locked = Boolean(top.locked_by_match);
+    if (!locked && topDay === todayYmd && (!maxMatchDay || topDay >= maxMatchDay)) {
+      canMergeTop = true;
+    }
+  }
+
+  let entry;
+  if (canMergeTop) {
+    entry = logs[0];
+  } else {
+    entry = { timestamp: nowTs, added: [], removed: [], changed: [] };
+    logs.unshift(entry);
+  }
+
+  const key = cleanName.toLowerCase();
+  const added = entry.added;
+  const removed = entry.removed;
+  const changed = entry.changed;
+
+  const addIdx = added.findIndex((tok) => parseChangeToken(tok).name.toLowerCase() === key);
+  if (addIdx >= 0) {
+    if (newQty <= 0) added.splice(addIdx, 1);
+    else added[addIdx] = formatCardQtyToken(cleanName, newQty);
+  } else {
+    const remIdx = removed.findIndex((tok) => parseChangeToken(tok).name.toLowerCase() === key);
+    if (remIdx >= 0) {
+      const origQty = parseChangeToken(removed[remIdx]).qty;
+      removed.splice(remIdx, 1);
+      if (newQty === origQty) {
+        // Annullata (netto zero)
+      } else if (newQty <= 0) {
+        removed.push(formatCardQtyToken(cleanName, origQty));
+      } else {
+        changed.push(`${cleanName}: ${origQty} -> ${newQty}`);
+      }
+    } else {
+      let chgIdx = -1;
+      let origQty = oldQty;
+      for (let i = 0; i < changed.length; i++) {
+        const m = String(changed[i] || "").trim().match(/^(.+?):\s*(\d+)\s*(?:->|→)\s*(\d+)$/);
+        if (m && m[1].trim().toLowerCase() === key) {
+          chgIdx = i;
+          origQty = Math.max(0, parseInt(m[2], 10));
+          break;
+        }
+      }
+      if (chgIdx >= 0) {
+        changed.splice(chgIdx, 1);
+        if (newQty === origQty) {
+          // Annullata (netto zero)
+        } else if (newQty <= 0) {
+          removed.push(formatCardQtyToken(cleanName, origQty));
+        } else if (origQty <= 0) {
+          added.push(formatCardQtyToken(cleanName, newQty));
+        } else {
+          changed.push(`${cleanName}: ${origQty} -> ${newQty}`);
+        }
+      } else {
+        if (oldQty <= 0 && newQty > 0) added.push(formatCardQtyToken(cleanName, newQty));
+        else if (oldQty > 0 && newQty <= 0) removed.push(formatCardQtyToken(cleanName, oldQty));
+        else changed.push(`${cleanName}: ${oldQty} -> ${newQty}`);
+      }
+    }
+  }
+
+  entry.timestamp = nowTs;
+  if (!entry.added.length && !entry.removed.length && !entry.changed.length) {
+    logs.shift();
+  }
+  return logs;
 }
 function setStatus(el, msg, type = "") {
   if (!el) return;
@@ -600,9 +769,16 @@ $("btn-create-new-deck")?.addEventListener("click", async () => {
     const sc = newDeckSelectedCmd;
     const normalUrl = sc.image_uris?.normal || sc.card_faces?.[0]?.image_uris?.normal || "";
     const artUrl = sc.image_uris?.art_crop || sc.card_faces?.[0]?.image_uris?.art_crop || normalUrl;
-    const manaCost = sc.mana_cost || sc.card_faces?.[0]?.mana_cost || "";
-    const oracleText = sc.oracle_text || sc.card_faces?.[0]?.oracle_text || "";
+    const manaCost = extractManaCostFromScryfall(sc);
+    const oracleText = extractOracleTextFromScryfall(sc);
+    const colorIdentity = resolveCardColorIdentity({
+      color_identity: sc.color_identity,
+      colors: sc.colors,
+      mana_cost: manaCost,
+      oracle_text: oracleText,
+    });
     const priceEur = extractScryfallEurPrice(sc, false);
+    const setLower = String(sc.set || "").trim().toLowerCase();
 
     const cmdRow = {
       deck_id: createdDeck.id,
@@ -626,11 +802,12 @@ $("btn-create-new-deck")?.addEventListener("click", async () => {
         mana_cost: manaCost,
         image_url: artUrl,
         card_image_url: normalUrl,
-        color_identity: sc.color_identity || [],
-        set: (sc.set || "").toUpperCase(),
-        set_code: (sc.set || "").toUpperCase(),
+        color_identity: colorIdentity,
+        set: setLower,
+        set_code: setLower.toUpperCase(),
         set_name: sc.set_name || "",
         collector_number: sc.collector_number || "",
+        foil: false,
         price_eur: priceEur,
         quantity: 1,
         is_commander: true,
@@ -638,16 +815,16 @@ $("btn-create-new-deck")?.addEventListener("click", async () => {
         tags: [],
       },
     ];
-    try {
-      await sb.from("decks").update({ cards_json: cardsJson, bg_image_url: artUrl }).eq("id", createdDeck.id);
-    } catch {
-      try {
-        await sb.from("decks").update({ cards_json: cardsJson }).eq("id", createdDeck.id);
-      } catch {
-        // ignora
-      }
+
+    const { error: updErr } = await sb
+      .from("decks")
+      .update({ cards_json: cardsJson, bg_image_url: artUrl })
+      .eq("id", createdDeck.id);
+    if (updErr) {
+      await sb.from("decks").update({ cards_json: cardsJson }).eq("id", createdDeck.id);
     }
   }
+
 
   $("new-deck-modal")?.classList.add("hidden");
   await loadDecks();
@@ -734,6 +911,7 @@ function applyDeckHeroBg(bgUrl) {
 
 let currentDeckHistory = [];
 let currentDeckCards = [];
+let currentDeckChangelog = [];
 let deckGroupMode = "type"; // "type" | "tag"
 let deckViewMode = "list";  // "list" | "grid"
 
@@ -790,7 +968,11 @@ window.openDeckDetail = async function (deckId) {
   const deck = myDecks.find((d) => String(d.id) === String(deckId));
   if (!deck) return;
 
+  
   selectedDeckId = deck.id;
+  currentDeckChangelog = Array.isArray(deck.changelog_json)
+    ? deck.changelog_json.map((e) => ({ ...e }))
+    : [];
   const fmt = deck.format || deck.type || "Mazzo";
   $("deck-detail-title").textContent = deck.name || "Senza nome";
   $("deck-detail-format").textContent = fmt;
@@ -813,6 +995,7 @@ window.openDeckDetail = async function (deckId) {
 
 $("btn-back-to-decks")?.addEventListener("click", () => {
   selectedDeckId = null;
+  currentDeckChangelog = [];
   currentDeckHistory = [];
   currentDeckCards = [];
   $("deck-search-dropdown")?.classList.add("hidden");
@@ -1136,6 +1319,12 @@ $("btn-save-deck-match")?.addEventListener("click", async () => {
     setStatus($("deck-status"), error.message, "err");
     return;
   }
+  if (currentDeckChangelog.length > 0 && !currentDeckChangelog[0].locked_by_match) {
+    currentDeckChangelog[0] = { ...currentDeckChangelog[0], locked_by_match: true };
+    const deck = myDecks.find((d) => String(d.id) === String(selectedDeckId));
+    if (deck) deck.changelog_json = currentDeckChangelog;
+    await sb.from("decks").update({ changelog_json: currentDeckChangelog }).eq("id", selectedDeckId);
+  }
 
   $("deck-wins").value = "0";
   setStatus($("deck-status"), "Partita salvata!", "ok");
@@ -1225,11 +1414,12 @@ function mergeDeckCardsWithJson(dbRows, jsonRows) {
         (r.name && jsonByName.get(String(r.name).toLowerCase())) ||
         {};
       const setCode = String(meta.set || meta.set_code || "").trim().toLowerCase();
-      return {
+      const merged = {
         ...meta,
         ...r,
+        mana_cost: r.mana_cost || meta.mana_cost || "",
+        oracle_text: r.oracle_text || meta.oracle_text || "",
         card_image_url: meta.card_image_url || toNormalCardUrl(r.image_url || ""),
-        color_identity: Array.isArray(meta.color_identity) ? meta.color_identity : [],
         set: setCode,
         set_code: setCode.toUpperCase(),
         set_name: meta.set_name || "",
@@ -1239,16 +1429,17 @@ function mergeDeckCardsWithJson(dbRows, jsonRows) {
         is_proxy: Boolean(meta.is_proxy ?? meta.proxy),
         tags: normalizeTagsList(meta.tags),
       };
+      merged.color_identity = resolveCardColorIdentity(merged);
+      return merged;
     });
   }
 
   if (Array.isArray(jsonRows) && jsonRows.length > 0) {
     return jsonRows.map((jc) => {
       const setCode = String(jc.set || jc.set_code || "").trim().toLowerCase();
-      return {
+      const merged = {
         ...jc,
         card_image_url: jc.card_image_url || toNormalCardUrl(jc.image_url || ""),
-        color_identity: Array.isArray(jc.color_identity) ? jc.color_identity : [],
         set: setCode,
         set_code: setCode.toUpperCase(),
         set_name: jc.set_name || "",
@@ -1258,13 +1449,15 @@ function mergeDeckCardsWithJson(dbRows, jsonRows) {
         is_proxy: Boolean(jc.is_proxy ?? jc.proxy),
         tags: normalizeTagsList(jc.tags),
       };
+      merged.color_identity = resolveCardColorIdentity(merged);
+      return merged;
     });
   }
 
   return [];
 }
 
-async function syncDeckCardsJson(deckId) {
+async function syncDeckCardsJson(deckId, extraFields = {}) {
   const deck = myDecks.find((d) => String(d.id) === String(deckId));
   const payload = currentDeckCards.map((c) => {
     const setLower = String(c.set || c.set_code || "").trim().toLowerCase();
@@ -1276,7 +1469,7 @@ async function syncDeckCardsJson(deckId) {
       mana_cost: c.mana_cost || "",
       image_url: c.image_url || "",
       card_image_url: c.card_image_url || toNormalCardUrl(c.image_url || ""),
-      color_identity: Array.isArray(c.color_identity) ? c.color_identity : [],
+      color_identity: resolveCardColorIdentity(c),
       set: setLower,
       set_code: setLower.toUpperCase(),
       set_name: c.set_name || "",
@@ -1290,11 +1483,25 @@ async function syncDeckCardsJson(deckId) {
     };
   });
 
-  if (deck) deck.cards_json = payload;
-  try {
-    await sb.from("decks").update({ cards_json: payload }).eq("id", deckId);
-  } catch {
-    // ignora se la colonna non esiste
+  if (deck) {
+    deck.cards_json = payload;
+    deck.changelog_json = currentDeckChangelog;
+    if (extraFields.bg_image_url) deck.bg_image_url = extraFields.bg_image_url;
+  }
+
+  const updateBody = {
+    cards_json: payload,
+    changelog_json: currentDeckChangelog,
+    ...extraFields,
+  };
+
+  const { error } = await sb.from("decks").update(updateBody).eq("id", deckId);
+  if (error) {
+    // Fallback nel caso qualche colonna extra (es. bg_image_url) non sia aggiornabile
+    await sb
+      .from("decks")
+      .update({ cards_json: payload, changelog_json: currentDeckChangelog })
+      .eq("id", deckId);
   }
 }
 
@@ -1603,6 +1810,13 @@ window.changeDeckCardQty = async function (cardIdx, delta) {
       }
     }
     currentDeckCards.splice(cardIdx, 1);
+    currentDeckChangelog = applyCardDeltaToChangelog(
+      currentDeckChangelog,
+      currentDeckHistory,
+      card.name,
+      curQty,
+      0
+    );
     if (activeDetailCardIdx === cardIdx) {
       $("card-preview-modal")?.classList.add("hidden");
       activeDetailCardIdx = -1;
@@ -1638,14 +1852,24 @@ window.changeDeckCardQty = async function (cardIdx, delta) {
       document.querySelectorAll(`[data-card-qty-idx="${cardIdx}"]`).forEach((el) => {
         el.textContent = String(curQty);
       });
+      if (activeDetailCardIdx === cardIdx && $("detail-qty-num")) {
+        $("detail-qty-num").textContent = String(curQty);
+      }
       updateDeckCardCountAndCi();
       setStatus($("deck-cards-status"), error.message, "err");
       return;
     }
   }
+
+  currentDeckChangelog = applyCardDeltaToChangelog(
+    currentDeckChangelog,
+    currentDeckHistory,
+    card.name,
+    curQty,
+    newQty
+  );
   await syncDeckCardsJson(selectedDeckId);
 };
-
 // ---- CAMBIA COMANDANTE ----
 $("btn-open-change-commander")?.addEventListener("click", () => {
   changeCmdResults = [];
@@ -1727,16 +1951,33 @@ window.applyNewCommander = async function (idx) {
 
   const normalUrl = sc.image_uris?.normal || sc.card_faces?.[0]?.image_uris?.normal || "";
   const artUrl = sc.image_uris?.art_crop || sc.card_faces?.[0]?.image_uris?.art_crop || normalUrl;
-  const manaCost = sc.mana_cost || sc.card_faces?.[0]?.mana_cost || "";
-  const oracleText = sc.oracle_text || sc.card_faces?.[0]?.oracle_text || "";
+  const manaCost = extractManaCostFromScryfall(sc);
+  const oracleText = extractOracleTextFromScryfall(sc);
+  const colorIdentity = resolveCardColorIdentity({
+    color_identity: sc.color_identity,
+    colors: sc.colors,
+    mana_cost: manaCost,
+    oracle_text: oracleText,
+  });
   const priceEur = extractScryfallEurPrice(sc, false);
+  const setLower = String(sc.set || "").trim().toLowerCase();
 
   if (existing) {
     existing.is_commander = true;
     existing.quantity = 1;
-    existing.color_identity = sc.color_identity || existing.color_identity || [];
+    existing.mana_cost = manaCost || existing.mana_cost || "";
+    existing.oracle_text = oracleText || existing.oracle_text || "";
+    existing.color_identity = colorIdentity;
     if (existing.id) {
-      await sb.from("deck_cards").update({ is_commander: true, quantity: 1 }).eq("id", existing.id);
+      await sb
+        .from("deck_cards")
+        .update({
+          is_commander: true,
+          quantity: 1,
+          mana_cost: existing.mana_cost,
+          oracle_text: existing.oracle_text,
+        })
+        .eq("id", existing.id);
     }
   } else {
     const newRow = {
@@ -1759,20 +2000,26 @@ window.applyNewCommander = async function (idx) {
     currentDeckCards.unshift({
       ...(inserted || newRow),
       card_image_url: normalUrl,
-      color_identity: sc.color_identity || [],
-      set_code: (sc.set || "").toUpperCase(),
+      color_identity: colorIdentity,
+      set: setLower,
+      set_code: setLower.toUpperCase(),
       set_name: sc.set_name || "",
       collector_number: sc.collector_number || "",
+      foil: false,
       price_eur: priceEur,
       is_proxy: false,
       tags: [],
     });
+
+    currentDeckChangelog = applyCardDeltaToChangelog(
+      currentDeckChangelog, currentDeckHistory, sc.name, 0, 1
+    );
   }
 
   if (artUrl) applyDeckHeroBg(artUrl);
   updateDeckCardCountAndCi();
   renderDeckCardsList(currentDeckCards);
-  await syncDeckCardsJson(selectedDeckId);
+  await syncDeckCardsJson(selectedDeckId, artUrl ? { bg_image_url: artUrl } : {});
   $("commander-modal")?.classList.add("hidden");
 };
 
@@ -1886,9 +2133,16 @@ window.addCardToCurrentDeck = async function (resultIdx) {
     sc.card_faces?.[0]?.image_uris?.normal ||
     sc.image_uris?.art_crop ||
     "";
-  const manaCost = sc.mana_cost || sc.card_faces?.[0]?.mana_cost || "";
-  const oracleText = sc.oracle_text || sc.card_faces?.[0]?.oracle_text || "";
+  const manaCost = extractManaCostFromScryfall(sc);
+  const oracleText = extractOracleTextFromScryfall(sc);
+  const colorIdentity = resolveCardColorIdentity({
+    color_identity: sc.color_identity,
+    colors: sc.colors,
+    mana_cost: manaCost,
+    oracle_text: oracleText,
+  });
   const priceEur = extractScryfallEurPrice(sc, false);
+  const setLower = String(sc.set || "").trim().toLowerCase();
 
   const newRow = {
     deck_id: selectedDeckId,
@@ -1917,14 +2171,25 @@ window.addCardToCurrentDeck = async function (resultIdx) {
   currentDeckCards.push({
     ...(inserted || newRow),
     card_image_url: imageUrl,
-    color_identity: sc.color_identity || [],
-    set_code: (sc.set || "").toUpperCase(),
+    color_identity: colorIdentity,
+    set: setLower,
+    set_code: setLower.toUpperCase(),
     set_name: sc.set_name || "",
     collector_number: sc.collector_number || "",
+    foil: false,
     price_eur: priceEur,
     is_proxy: false,
     tags: [],
   });
+
+  currentDeckChangelog = applyCardDeltaToChangelog(
+    currentDeckChangelog,
+    currentDeckHistory,
+    sc.name,
+    0,
+    1
+  );
+
   updateDeckCardCountAndCi();
   renderDeckCardsList(currentDeckCards);
   await syncDeckCardsJson(selectedDeckId);
