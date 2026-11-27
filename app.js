@@ -20,7 +20,7 @@ const DEFAULT_SCANNER_WS_URL = "wss://manastat-scanner-server.onrender.com/ws/sc
 const STORAGE_SETS_KEY = "manastat_scanner_selected_sets";
 
 // Badge versione sempre visibile sopra la barra di navigazione
-const APP_UI_VERSION = "v3.0";
+const APP_UI_VERSION = "v3.1";
 let connectedServerVersion = "";
 
 function renderVersionBadge() {
@@ -636,6 +636,7 @@ async function resolveDeckArtwork(deck) {
 // ---- CREAZIONE NUOVO MAZZO DA MOBILE ----
 let newDeckSelectedCmd = null;
 let newDeckCmdResults = [];
+let newDeckCmdTimer = null;
 
 function toggleNewDeckCmdVisibility() {
   const fmt = $("new-deck-format")?.value || "";
@@ -667,6 +668,7 @@ window.pickNewDeckCmd = function (idx) {
   if (!sc) return;
   newDeckSelectedCmd = sc;
   $("new-deck-cmd-results").innerHTML = "";
+  setStatus($("new-deck-cmd-status"), "");
   $("new-deck-cmd-input").value = sc.name || "";
   if (!($("new-deck-name")?.value || "").trim()) {
     $("new-deck-name").value = sc.name || "";
@@ -678,10 +680,12 @@ async function searchNewDeckCommander() {
   const q = ($("new-deck-cmd-input")?.value || "").trim();
   const box = $("new-deck-cmd-results");
   if (q.length < 2) {
+    newDeckCmdResults = [];
     box.innerHTML = "";
+    setStatus($("new-deck-cmd-status"), "");
     return;
   }
-  box.innerHTML = `<div class="muted" style="font-size:12px;padding:4px;">Ricerca...</div>`;
+  setStatus($("new-deck-cmd-status"), "Ricerca su Scryfall...");
   try {
     const resp = await fetch(
       `https://api.scryfall.com/cards/search?q=${encodeURIComponent(`${q} is:commander`)}&unique=cards`
@@ -691,21 +695,29 @@ async function searchNewDeckCommander() {
       const fb = await fetch(`https://api.scryfall.com/cards/search?q=${encodeURIComponent(q)}&unique=cards`);
       json = fb.ok ? await fb.json() : { data: [] };
     }
-    newDeckCmdResults = (json.data || []).slice(0, 8);
+    newDeckCmdResults = (json.data || []).slice(0, 12);
     if (!newDeckCmdResults.length) {
-      box.innerHTML = `<div class="muted" style="font-size:12px;padding:4px;">Nessuna carta trovata.</div>`;
+      box.innerHTML = "";
+      setStatus($("new-deck-cmd-status"), "Nessuna carta trovata.");
       return;
     }
+    setStatus($("new-deck-cmd-status"), "");
     box.innerHTML = newDeckCmdResults
-      .map((c, i) => `
-        <div class="cmd-mini-row" onclick="pickNewDeckCmd(${i})">
-          <span>${escapeHtml(c.name || "")}</span>
-          <span>${renderManaPipsHtml(c.mana_cost || c.card_faces?.[0]?.mana_cost || "")}</span>
-        </div>
-      `)
+      .map((c, i) => {
+        const img = c.image_uris?.normal || c.card_faces?.[0]?.image_uris?.normal || "";
+        const price = extractScryfallEurPrice(c, false);
+        return `
+          <div class="deck-search-tile">
+            ${img ? `<img class="deck-search-tile-img" src="${escapeHtml(img)}" alt="${escapeHtml(c.name || "")}" loading="lazy" />` : `<div class="deck-search-tile-img"></div>`}
+            <div class="deck-search-tile-name">${escapeHtml(c.name || "")}</div>
+            <div class="deck-search-tile-price">${formatEur(price)}</div>
+            <button type="button" class="deck-add-btn" onclick="pickNewDeckCmd(${i})">Scegli</button>
+          </div>
+        `;
+      })
       .join("");
   } catch {
-    box.innerHTML = `<div class="muted" style="font-size:12px;padding:4px;">Errore Scryfall.</div>`;
+    setStatus($("new-deck-cmd-status"), "Errore di connessione a Scryfall.", "err");
   }
 }
 
@@ -716,6 +728,7 @@ $("btn-open-new-deck")?.addEventListener("click", () => {
   if ($("new-deck-format")) $("new-deck-format").value = "Commander";
   if ($("new-deck-cmd-input")) $("new-deck-cmd-input").value = "";
   if ($("new-deck-cmd-results")) $("new-deck-cmd-results").innerHTML = "";
+  setStatus($("new-deck-cmd-status"), "");
   setStatus($("new-deck-status"), "");
   renderNewDeckSelectedCmd();
   toggleNewDeckCmdVisibility();
@@ -724,10 +737,13 @@ $("btn-open-new-deck")?.addEventListener("click", () => {
 
 $("new-deck-format")?.addEventListener("change", toggleNewDeckCmdVisibility);
 $("btn-new-deck-cmd-search")?.addEventListener("click", searchNewDeckCommander);
+$("new-deck-cmd-input")?.addEventListener("input", () => {
+  clearTimeout(newDeckCmdTimer);
+  newDeckCmdTimer = setTimeout(searchNewDeckCommander, 350);
+});
 $("btn-cancel-new-deck")?.addEventListener("click", () => {
   $("new-deck-modal")?.classList.add("hidden");
 });
-
 $("btn-create-new-deck")?.addEventListener("click", async () => {
   const name = ($("new-deck-name")?.value || "").trim();
   const fmt = $("new-deck-format")?.value || "Commander";
@@ -873,29 +889,118 @@ async function loadDecks() {
   }
 }
 
+let decksFormatFilter = "ALL";
+
+function getDeckFormatLabel(deck) {
+  return String(deck.format || deck.type || "Altro").trim() || "Altro";
+}
+
+function renderDecksFormatFilter() {
+  const bar = $("decks-format-filter");
+  if (!bar) return;
+
+  const formatsPresent = [];
+  const seen = new Set();
+  for (const d of myDecks) {
+    const f = getDeckFormatLabel(d);
+    if (!seen.has(f)) {
+      seen.add(f);
+      formatsPresent.push(f);
+    }
+  }
+
+  if (formatsPresent.length <= 1) {
+    decksFormatFilter = "ALL";
+    bar.classList.add("hidden");
+    bar.innerHTML = "";
+    return;
+  }
+
+  if (decksFormatFilter !== "ALL" && !seen.has(decksFormatFilter)) {
+    decksFormatFilter = "ALL";
+  }
+
+  bar.classList.remove("hidden");
+  const pills = ["ALL", ...formatsPresent];
+  bar.innerHTML = pills
+    .map((fmt) => {
+      const label = fmt === "ALL" ? "Tutti" : fmt;
+      const active = decksFormatFilter === fmt ? "active" : "";
+      return `<button type="button" class="format-pill ${active}" onclick="setDecksFormatFilter('${escapeHtml(fmt)}')">${escapeHtml(label)}</button>`;
+    })
+    .join("");
+}
+
+window.setDecksFormatFilter = function (fmt) {
+  decksFormatFilter = fmt;
+  renderDecksList();
+};
+
 function renderDecksList() {
+  renderDecksFormatFilter();
   const container = $("decks-list-container");
   if (!myDecks.length) {
     container.innerHTML = `<p class="muted">Nessun mazzo trovato sul tuo account. Tocca + in alto per crearne uno.</p>`;
     return;
   }
 
-  container.innerHTML = myDecks
-    .map((d) => {
-      const bg = extractDeckImageUrl(d) || d._resolvedArtUrl || "";
-      const bgStyle = bg ? `style="background-image: url('${escapeHtml(bg)}');"` : "";
-      const fmtText = d.format || d.type || "Mazzo";
-      return `
-        <button type="button" class="deck-banner-card" data-deck-card-id="${escapeHtml(d.id)}" ${bgStyle} onclick="openDeckDetail('${escapeHtml(d.id)}')">
-          <div class="deck-banner-content">
-            <div>
-              <div class="deck-banner-title">${escapeHtml(d.name || "Senza nome")}</div>
-              <div class="deck-banner-sub">${escapeHtml(fmtText)}</div>
+  const visible =
+    decksFormatFilter === "ALL"
+      ? myDecks
+      : myDecks.filter((d) => getDeckFormatLabel(d) === decksFormatFilter);
+
+  if (!visible.length) {
+    container.innerHTML = `<p class="muted">Nessun mazzo in questo formato.</p>`;
+    return;
+  }
+
+  // Raggruppa per formato per inserire le linee di separazione
+  const groups = [];
+  const byFmt = new Map();
+  for (const d of visible) {
+    const f = getDeckFormatLabel(d);
+    if (!byFmt.has(f)) {
+      const arr = [];
+      byFmt.set(f, arr);
+      groups.push({ fmt: f, decks: arr });
+    }
+    byFmt.get(f).push(d);
+  }
+
+  const showDividers = groups.length > 1 || decksFormatFilter === "ALL";
+
+  container.innerHTML = groups
+    .map((g) => {
+      const dividerHtml = showDividers
+        ? `
+            <div class="decks-format-divider">
+              <span class="decks-format-divider-label">${escapeHtml(g.fmt)}</span>
+              <span class="decks-format-divider-line"></span>
+              <span class="decks-format-divider-count">${g.decks.length}</span>
             </div>
-            <div class="deck-banner-arrow">›</div>
-          </div>
-        </button>
-      `;
+          `
+        : "";
+
+      const cardsHtml = g.decks
+        .map((d) => {
+          const bg = extractDeckImageUrl(d) || d._resolvedArtUrl || "";
+          const bgStyle = bg ? `style="background-image: url('${escapeHtml(bg)}');"` : "";
+          const fmtText = getDeckFormatLabel(d);
+          return `
+            <button type="button" class="deck-banner-card" data-deck-card-id="${escapeHtml(d.id)}" ${bgStyle} onclick="openDeckDetail('${escapeHtml(d.id)}')">
+              <div class="deck-banner-content">
+                <div>
+                  <div class="deck-banner-title">${escapeHtml(d.name || "Senza nome")}</div>
+                  <div class="deck-banner-sub">${escapeHtml(fmtText)}</div>
+                </div>
+                <div class="deck-banner-arrow">›</div>
+              </div>
+            </button>
+          `;
+        })
+        .join("");
+
+      return `${dividerHtml}${cardsHtml}`;
     })
     .join("");
 }
@@ -914,6 +1019,7 @@ let currentDeckCards = [];
 let currentDeckChangelog = [];
 let deckGroupMode = "type"; // "type" | "tag"
 let deckViewMode = "list";  // "list" | "grid"
+let deckSortMode = "alpha"; // "alpha" | "cmc" | "price"
 
 // Switch sotto-tab della scheda mazzo
 document.querySelectorAll(".deck-subtab-btn").forEach((btn) => {
@@ -950,6 +1056,11 @@ $("btn-group-tag")?.addEventListener("click", () => {
   renderDeckCardsList(currentDeckCards);
 });
 
+$("deck-sort-select")?.addEventListener("change", (e) => {
+  deckSortMode = e.target.value || "alpha";
+  renderDeckCardsList(currentDeckCards);
+});
+
 $("btn-view-list")?.addEventListener("click", () => {
   deckViewMode = "list";
   $("btn-view-list").classList.add("active");
@@ -968,7 +1079,6 @@ window.openDeckDetail = async function (deckId) {
   const deck = myDecks.find((d) => String(d.id) === String(deckId));
   if (!deck) return;
 
-  
   selectedDeckId = deck.id;
   currentDeckChangelog = Array.isArray(deck.changelog_json)
     ? deck.changelog_json.map((e) => ({ ...e }))
@@ -978,7 +1088,6 @@ window.openDeckDetail = async function (deckId) {
   $("deck-detail-format").textContent = fmt;
   $("deck-detail-count").textContent = "";
   $("deck-detail-price")?.classList.add("hidden");
-  $("deck-commander-bar")?.classList.toggle("hidden", !isCommanderFormat(fmt));
   applyDeckHeroBg(extractDeckImageUrl(deck) || deck._resolvedArtUrl || "");
   setStatus($("deck-status"), "");
   $("deck-search-dropdown")?.classList.add("hidden");
@@ -1003,6 +1112,33 @@ $("btn-back-to-decks")?.addEventListener("click", () => {
   $("decks-list-view").classList.remove("hidden");
 });
 
+// Eliminazione mazzo da mobile
+$("btn-delete-deck")?.addEventListener("click", async () => {
+  if (!selectedDeckId) return;
+  const deck = myDecks.find((d) => String(d.id) === String(selectedDeckId));
+  const dName = deck?.name || "questo mazzo";
+  if (!confirm(`Eliminare definitivamente "${dName}"? Verranno rimosse anche lista carte e storico partite.`)) {
+    return;
+  }
+
+  const targetId = selectedDeckId;
+  await sb.from("deck_history").delete().eq("deck_id", targetId);
+  await sb.from("deck_cards").delete().eq("deck_id", targetId);
+  const { error } = await sb.from("decks").delete().eq("id", targetId);
+
+  if (error) {
+    alert(`Errore eliminazione mazzo: ${error.message}`);
+    return;
+  }
+
+  selectedDeckId = null;
+  currentDeckChangelog = [];
+  currentDeckHistory = [];
+  currentDeckCards = [];
+  $("deck-detail-view").classList.add("hidden");
+  $("decks-list-view").classList.remove("hidden");
+  await loadDecks();
+});
 // ---- STATISTICHE & STORICO (deck_history) ----
 async function loadDeckHistory(deckId) {
   const { data, error } = await sb
@@ -1307,18 +1443,51 @@ $("btn-save-deck-match")?.addEventListener("click", async () => {
   }
 
   setStatus($("deck-status"), "Salvataggio...");
-  const { error } = await sb.from("deck_history").insert({
-    deck_id: selectedDeckId,
-    user_id: currentUser.id,
-    played_on: playedOn,
-    match: matches,
-    win: wins,
-  });
 
-  if (error) {
-    setStatus($("deck-status"), error.message, "err");
+  const sameDayRows = currentDeckHistory.filter(
+    (r) => String(r.played_on || "").slice(0, 10) === playedOn
+  );
+
+  let saveError = null;
+  if (sameDayRows.length > 0) {
+    const primary = sameDayRows[0];
+    const existingM = sameDayRows.reduce((s, r) => s + Math.max(0, Number(r.match || 0)), 0);
+    const existingW = sameDayRows.reduce(
+      (s, r) => s + Math.max(0, Math.min(Number(r.win || 0), Number(r.match || 0))),
+      0
+    );
+
+    const { error } = await sb
+      .from("deck_history")
+      .update({
+        match: existingM + matches,
+        win: existingW + wins,
+      })
+      .eq("id", primary.id);
+    saveError = error;
+
+    if (!saveError && sameDayRows.length > 1) {
+      const extraIds = sameDayRows.slice(1).map((r) => r.id).filter(Boolean);
+      if (extraIds.length) {
+        await sb.from("deck_history").delete().in("id", extraIds);
+      }
+    }
+  } else {
+    const { error } = await sb.from("deck_history").insert({
+      deck_id: selectedDeckId,
+      user_id: currentUser.id,
+      played_on: playedOn,
+      match: matches,
+      win: wins,
+    });
+    saveError = error;
+  }
+
+  if (saveError) {
+    setStatus($("deck-status"), saveError.message, "err");
     return;
   }
+
   if (currentDeckChangelog.length > 0 && !currentDeckChangelog[0].locked_by_match) {
     currentDeckChangelog[0] = { ...currentDeckChangelog[0], locked_by_match: true };
     const deck = myDecks.find((d) => String(d.id) === String(selectedDeckId));
@@ -1327,7 +1496,11 @@ $("btn-save-deck-match")?.addEventListener("click", async () => {
   }
 
   $("deck-wins").value = "0";
-  setStatus($("deck-status"), "Partita salvata!", "ok");
+  setStatus(
+    $("deck-status"),
+    sameDayRows.length > 0 ? "Sessione del giorno aggiornata!" : "Partita salvata!",
+    "ok"
+  );
   await loadDeckHistory(selectedDeckId);
 });
 
@@ -1698,40 +1871,93 @@ function buildGroupedDeckSections(cards) {
     .map((cat) => ({ title: cat, list: groups.get(cat) }));
 }
 
+function parseCmcFromManaCost(manaCost) {
+  const front = String(manaCost || "").split("//")[0].trim();
+  if (!front) return 0;
+  const tokens = front.match(/\{([^}]+)\}/g) || [];
+  let cmc = 0;
+  for (const t of tokens) {
+    const sym = t.slice(1, -1).toUpperCase();
+    if (/^\d+$/.test(sym)) cmc += parseInt(sym, 10);
+    else if (sym === "X" || sym === "Y" || sym === "Z") cmc += 0;
+    else if (sym.includes("/") && sym.split("/").includes("2")) cmc += 2;
+    else cmc += 1;
+  }
+  return cmc;
+}
+
+function sortDeckCardsSlice(list) {
+  const arr = list.slice();
+  if (deckSortMode === "cmc") {
+    return arr.sort((a, b) => {
+      const ca = parseCmcFromManaCost(a.mana_cost);
+      const cb = parseCmcFromManaCost(b.mana_cost);
+      if (ca !== cb) return ca - cb;
+      return String(a.name || "").localeCompare(String(b.name || ""), "it");
+    });
+  }
+  if (deckSortMode === "price") {
+    return arr.sort((a, b) => {
+      const pa = Number(a.price_eur || 0) * Math.max(1, Number(a.quantity || 1));
+      const pb = Number(b.price_eur || 0) * Math.max(1, Number(b.quantity || 1));
+      if (pb !== pa) return pb - pa;
+      return String(a.name || "").localeCompare(String(b.name || ""), "it");
+    });
+  }
+  return arr.sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "it"));
+}
+
 function renderDeckCardsList(cards) {
   const container = $("deck-cards-list");
-  if (!cards.length) {
+  const curDeck = myDecks.find((d) => String(d.id) === String(selectedDeckId));
+  const isCmdDeck = isCommanderFormat(curDeck?.format || curDeck?.type || "");
+  const hasCommander = cards.some((c) => c && c.is_commander);
+
+  if (!cards.length && !isCmdDeck) {
     container.innerHTML = `<p class="muted">Nessuna carta nel mazzo. Usa la ricerca qui sopra per aggiungerle.</p>`;
     return;
   }
 
   const sections = buildGroupedDeckSections(cards);
 
+  if (isCmdDeck && !hasCommander) {
+    sections.unshift({ title: "Comandante", list: [] });
+  }
+
   if (deckViewMode === "grid") {
     container.innerHTML = `<div class="deck-visual-columns">${sections
       .map((sec) => {
-        const list = sec.list.slice().sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "it"));
+        const list = sortDeckCardsSlice(sec.list);
         const catCount = list.reduce((s, c) => s + Math.max(1, Number(c.quantity || 1)), 0);
         const isCmdCol = sec.title === "Comandante";
-        const stackItems = list
-          .map((c) => {
-            const qty = Math.max(1, Number(c.quantity || 1));
-            const imgUrl = c.card_image_url || toNormalCardUrl(c.image_url || "");
-            return `
-              <div class="deck-stack-item" onclick="openCardPreview(${c._idx})">
-                ${imgUrl
-                  ? `<img src="${escapeHtml(imgUrl)}" alt="${escapeHtml(c.name || "")}" loading="lazy" />`
-                  : `<div class="deck-stack-fallback">${escapeHtml(c.name || "")}</div>`}
-                ${qty > 1 ? `<span class="deck-stack-qty">${qty}x</span>` : ""}
-                ${c.is_proxy ? `<span class="deck-stack-proxy">PROXY</span>` : ""}
-              </div>
-            `;
-          })
-          .join("");
+        const cmdActionBtn =
+          isCmdCol && isCmdDeck
+            ? `<button type="button" class="deck-cat-mini-btn" onclick="openChangeCommanderModal()">${hasCommander ? "Cambia" : "Scegli"}</button>`
+            : "";
+        const stackItems = list.length
+          ? list
+              .map((c) => {
+                const qty = Math.max(1, Number(c.quantity || 1));
+                const imgUrl = c.card_image_url || toNormalCardUrl(c.image_url || "");
+                return `
+                  <div class="deck-stack-item" onclick="openCardPreview(${c._idx})">
+                    ${imgUrl
+                      ? `<img src="${escapeHtml(imgUrl)}" alt="${escapeHtml(c.name || "")}" loading="lazy" />`
+                      : `<div class="deck-stack-fallback">${escapeHtml(c.name || "")}</div>`}
+                    ${qty > 1 ? `<span class="deck-stack-qty">${qty}x</span>` : ""}
+                    ${c.is_proxy ? `<span class="deck-stack-proxy">PROXY</span>` : ""}
+                  </div>
+                `;
+              })
+              .join("")
+          : `<p class="muted" style="font-size:12px;margin:4px 0;">Nessun comandante impostato.</p>`;
 
         return `
           <div class="deck-stack-col ${isCmdCol ? "is-commander-col" : ""}">
-            <div class="deck-cat-title"><span>${escapeHtml(sec.title)}</span><span>${catCount}</span></div>
+            <div class="deck-cat-title">
+              <span>${escapeHtml(sec.title)}</span>
+              <span class="deck-cat-right">${cmdActionBtn}<span>${catCount}</span></span>
+            </div>
             <div class="deck-stack-cards">${stackItems}</div>
           </div>
         `;
@@ -1742,46 +1968,59 @@ function renderDeckCardsList(cards) {
 
   container.innerHTML = sections
     .map((sec) => {
-      const list = sec.list.slice().sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "it"));
+      const list = sortDeckCardsSlice(sec.list);
       const catCount = list.reduce((s, c) => s + Math.max(1, Number(c.quantity || 1)), 0);
-      const rows = list
-        .map((c) => {
-          const qty = Math.max(1, Number(c.quantity || 1));
-          const crown = c.is_commander ? "👑 " : "";
-          const manaHtml = renderManaPipsHtml(c.mana_cost);
-          const linePrice =
-            c.is_proxy
-              ? ""
-              : c.price_eur !== null && c.price_eur !== undefined
-                ? `<span class="card-price-inline">${formatEur(Number(c.price_eur) * qty)}</span>`
-                : "";
-          const proxyBadge = c.is_proxy ? `<span class="card-proxy-tag">PROXY</span>` : "";
-          const qtyControlsHtml = c.is_commander
-            ? ""
-            : `
-                <div class="deck-qty-controls">
-                  <button type="button" class="deck-qty-btn" onclick="changeDeckCardQty(${c._idx}, -1)">−</button>
-                  <span class="deck-qty-num" data-card-qty-idx="${c._idx}">${qty}</span>
-                  <button type="button" class="deck-qty-btn" onclick="changeDeckCardQty(${c._idx}, 1)">+</button>
-                </div>
-              `;
-          return `
-            <div class="deck-card-row">
-              <div class="deck-card-main" onclick="openCardPreview(${c._idx})">
-                <div class="deck-card-name-line">
-                  <span class="deck-card-name">${crown}${escapeHtml(c.name || "")}</span>
-                  ${proxyBadge}
-                </div>
-                <div class="deck-card-subline">
-                  ${manaHtml ? `<div class="deck-card-mana">${manaHtml}</div>` : ""}
-                  ${linePrice}
-                </div>
-              </div>
-              ${qtyControlsHtml}
+
+      let rows = "";
+      if (sec.title === "Comandante" && !list.length) {
+        rows = `
+          <div class="deck-card-row">
+            <div class="deck-card-main">
+              <span class="muted">Nessun comandante impostato</span>
             </div>
-          `;
-        })
-        .join("");
+            <button type="button" class="deck-cmd-inline-btn" onclick="openChangeCommanderModal()">Scegli</button>
+          </div>
+        `;
+      } else {
+        rows = list
+          .map((c) => {
+            const qty = Math.max(1, Number(c.quantity || 1));
+            const crown = c.is_commander ? "👑 " : "";
+            const manaHtml = renderManaPipsHtml(c.mana_cost);
+            const linePrice =
+              c.is_proxy
+                ? ""
+                : c.price_eur !== null && c.price_eur !== undefined
+                  ? `<span class="card-price-inline">${formatEur(Number(c.price_eur) * qty)}</span>`
+                  : "";
+            const proxyBadge = c.is_proxy ? `<span class="card-proxy-tag">PROXY</span>` : "";
+            const rightControlsHtml = c.is_commander
+              ? `<button type="button" class="deck-cmd-inline-btn" onclick="openChangeCommanderModal()">Cambia</button>`
+              : `
+                  <div class="deck-qty-controls">
+                    <button type="button" class="deck-qty-btn" onclick="changeDeckCardQty(${c._idx}, -1)">−</button>
+                    <span class="deck-qty-num" data-card-qty-idx="${c._idx}">${qty}</span>
+                    <button type="button" class="deck-qty-btn" onclick="changeDeckCardQty(${c._idx}, 1)">+</button>
+                  </div>
+                `;
+            return `
+              <div class="deck-card-row">
+                <div class="deck-card-main" onclick="openCardPreview(${c._idx})">
+                  <div class="deck-card-name-line">
+                    <span class="deck-card-name">${crown}${escapeHtml(c.name || "")}</span>
+                    ${proxyBadge}
+                  </div>
+                  <div class="deck-card-subline">
+                    ${manaHtml ? `<div class="deck-card-mana">${manaHtml}</div>` : ""}
+                    ${linePrice}
+                  </div>
+                </div>
+                ${rightControlsHtml}
+              </div>
+            `;
+          })
+          .join("");
+      }
 
       return `
         <div class="deck-cat-block">
@@ -1792,7 +2031,6 @@ function renderDeckCardsList(cards) {
     })
     .join("");
 }
-
 window.changeDeckCardQty = async function (cardIdx, delta) {
   const card = currentDeckCards[cardIdx];
   if (!card || !selectedDeckId || card.is_commander) return;
@@ -1871,13 +2109,16 @@ window.changeDeckCardQty = async function (cardIdx, delta) {
   await syncDeckCardsJson(selectedDeckId);
 };
 // ---- CAMBIA COMANDANTE ----
-$("btn-open-change-commander")?.addEventListener("click", () => {
+let changeCmdTimer = null;
+
+window.openChangeCommanderModal = function () {
   changeCmdResults = [];
   if ($("change-cmd-input")) $("change-cmd-input").value = "";
   if ($("change-cmd-results")) $("change-cmd-results").innerHTML = "";
   setStatus($("change-cmd-status"), "");
   $("commander-modal")?.classList.remove("hidden");
-});
+  setTimeout(() => $("change-cmd-input")?.focus(), 50);
+};
 
 $("btn-close-cmd-modal")?.addEventListener("click", () => {
   $("commander-modal")?.classList.add("hidden");
@@ -1887,6 +2128,7 @@ async function searchChangeCommander() {
   const q = ($("change-cmd-input")?.value || "").trim();
   const box = $("change-cmd-results");
   if (q.length < 2) {
+    changeCmdResults = [];
     box.innerHTML = "";
     setStatus($("change-cmd-status"), "");
     return;
@@ -1928,6 +2170,11 @@ async function searchChangeCommander() {
 }
 
 $("btn-change-cmd-search")?.addEventListener("click", searchChangeCommander);
+$("change-cmd-input")?.addEventListener("input", () => {
+  clearTimeout(changeCmdTimer);
+  changeCmdTimer = setTimeout(searchChangeCommander, 350);
+});
+
 
 window.applyNewCommander = async function (idx) {
   const sc = changeCmdResults[idx];
