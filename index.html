@@ -165,14 +165,14 @@
           </div>
         </div>
 
-        <!-- MODAL: NUOVO MAZZO -->
+        <!-- MODAL: NEW DECK -->
         <div id="new-deck-modal" class="proposal-overlay hidden">
           <div class="proposal-card modal-scroll-card">
-            <h2>Nuovo mazzo</h2>
-            <label for="new-deck-name">Nome del mazzo</label>
-            <input id="new-deck-name" type="text" placeholder="Es. Atraxa Superfriends" autocomplete="off" />
+            <h2>New Deck</h2>
+            <label for="new-deck-name">Deck Name</label>
+            <input id="new-deck-name" type="text" placeholder="e.g. Tymna &amp; Kraum" autocomplete="off" />
 
-            <label for="new-deck-format">Formato</label>
+            <label for="new-deck-format">Format</label>
             <select id="new-deck-format">
               <option value="Commander">Commander</option>
               <option value="Standard">Standard</option>
@@ -187,35 +187,39 @@
             </select>
 
             <div id="new-deck-cmd-section">
-              <label for="new-deck-cmd-input">Comandante (opzionale)</label>
-              <div class="deck-search-row">
-                <input id="new-deck-cmd-input" type="text" placeholder="Scrivi nome comandante..." autocomplete="off" />
-                <button id="btn-new-deck-cmd-search" type="button" class="btn small">Cerca</button>
+              <label>Commanders (optional)</label>
+              <div id="new-deck-cmd-slots" class="cmd-slots-grid"></div>
+              <div class="deck-search-row" style="margin-top:8px;">
+                <input id="new-deck-cmd-input" type="text" placeholder="Search commander..." autocomplete="off" />
+                <button id="btn-new-deck-cmd-search" type="button" class="btn small">Search</button>
               </div>
-              <div id="new-deck-cmd-selected" class="cmd-selected-pill hidden"></div>
               <p id="new-deck-cmd-status" class="status"></p>
               <div id="new-deck-cmd-results" class="deck-search-grid"></div>
             </div>
 
             <p id="new-deck-status" class="status"></p>
             <div class="proposal-actions">
-              <button id="btn-cancel-new-deck" type="button" class="btn">Annulla</button>
-              <button id="btn-create-new-deck" type="button" class="btn primary">Crea mazzo</button>
+              <button id="btn-cancel-new-deck" type="button" class="btn">Cancel</button>
+              <button id="btn-create-new-deck" type="button" class="btn primary">Create Deck</button>
             </div>
           </div>
         </div>
 
-        <!-- MODAL: CAMBIA COMANDANTE -->
+        <!-- MODAL: EDIT COMMANDERS -->
         <div id="commander-modal" class="proposal-overlay hidden">
           <div class="proposal-card modal-scroll-card">
-            <h2>Cambia comandante</h2>
-            <div class="deck-search-row">
-              <input id="change-cmd-input" type="text" placeholder="Scrivi nome comandante..." autocomplete="off" />
-              <button id="btn-change-cmd-search" type="button" class="btn primary small">Cerca</button>
+            <h2>Edit Commanders</h2>
+            <div id="edit-cmd-slots" class="cmd-slots-grid"></div>
+            <div class="deck-search-row" style="margin-top:8px;">
+              <input id="change-cmd-input" type="text" placeholder="Search commander on Scryfall..." autocomplete="off" />
+              <button id="btn-change-cmd-search" type="button" class="btn primary small">Search</button>
             </div>
             <p id="change-cmd-status" class="status"></p>
             <div id="change-cmd-results" class="deck-search-grid"></div>
-            <button id="btn-close-cmd-modal" type="button" class="btn" style="margin-top:10px;">Chiudi</button>
+            <div class="proposal-actions" style="margin-top:10px;">
+              <button id="btn-close-cmd-modal" type="button" class="btn">Cancel</button>
+              <button id="btn-save-commanders" type="button" class="btn primary">Save</button>
+            </div>
           </div>
         </div>
         <!-- MODAL: IMPORTA LISTA MAZZO -->
@@ -476,6 +480,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="app.js?v=13"></script>
+  <script src="app.js?v=14"></script>
 </body>
 </html>
