@@ -34,7 +34,7 @@
             <h2>I tuoi mazzi</h2>
             <button id="btn-open-new-deck" type="button" class="btn-circle-plus" title="Nuovo mazzo">+</button>
           </div>
-          <p class="muted">Tocca un mazzo per vedere statistiche, lista carte e partite.</p>
+          <div id="decks-format-filter" class="format-filter-bar hidden"></div>
           <div id="decks-list-container" class="deck-cards-list"></div>
           <p id="deck-list-status" class="status"></p>
         </div>
@@ -54,7 +54,10 @@
                 <h2 id="deck-detail-title">Mazzo</h2>
                 <span id="deck-detail-ci" class="deck-ci-icons"></span>
               </div>
-              <span id="deck-detail-format" class="badge">Formato</span>
+              <div class="deck-hero-bottom-row">
+                <span id="deck-detail-format" class="badge">Formato</span>
+                <button id="btn-delete-deck" type="button" class="deck-delete-btn">Elimina mazzo</button>
+              </div>
             </div>
           </div>
 
@@ -107,22 +110,21 @@
               </div>
             </div>
 
-            <!-- BARRA CONTROLLI: TIPO/TAG + LISTA/GRIGLIA + CAMBIA COMANDANTE -->
+            <!-- BARRA CONTROLLI: TIPO/TAG + ORDINE + LISTA/GRIGLIA -->
             <div class="deck-list-toolbar">
               <div class="seg-control">
-                <button type="button" id="btn-group-type" class="seg-btn active">Per Tipo</button>
-                <button type="button" id="btn-group-tag" class="seg-btn">Per Tag</button>
+                <button type="button" id="btn-group-type" class="seg-btn active">Tipo</button>
+                <button type="button" id="btn-group-tag" class="seg-btn">Tag</button>
               </div>
+              <select id="deck-sort-select" class="deck-sort-select" aria-label="Ordina carte">
+                <option value="alpha">A–Z</option>
+                <option value="cmc">CMC</option>
+                <option value="price">Prezzo</option>
+              </select>
               <div class="seg-control">
                 <button type="button" id="btn-view-list" class="seg-btn active">Lista</button>
                 <button type="button" id="btn-view-grid" class="seg-btn">Griglia</button>
               </div>
-            </div>
-
-            <div id="deck-commander-bar" class="deck-commander-bar hidden">
-              <button type="button" id="btn-open-change-commander" class="btn small deck-cmd-btn">
-                👑 Cambia comandante
-              </button>
             </div>
 
             <div class="card deck-cards-list-card">
@@ -184,11 +186,12 @@
             <div id="new-deck-cmd-section">
               <label for="new-deck-cmd-input">Comandante (opzionale)</label>
               <div class="deck-search-row">
-                <input id="new-deck-cmd-input" type="text" placeholder="Cerca comandante..." autocomplete="off" />
+                <input id="new-deck-cmd-input" type="text" placeholder="Scrivi nome comandante..." autocomplete="off" />
                 <button id="btn-new-deck-cmd-search" type="button" class="btn small">Cerca</button>
               </div>
               <div id="new-deck-cmd-selected" class="cmd-selected-pill hidden"></div>
-              <div id="new-deck-cmd-results" class="cmd-mini-results"></div>
+              <p id="new-deck-cmd-status" class="status"></p>
+              <div id="new-deck-cmd-results" class="deck-search-grid"></div>
             </div>
 
             <p id="new-deck-status" class="status"></p>
@@ -204,7 +207,7 @@
           <div class="proposal-card modal-scroll-card">
             <h2>Cambia comandante</h2>
             <div class="deck-search-row">
-              <input id="change-cmd-input" type="text" placeholder="Cerca comandante su Scryfall..." autocomplete="off" />
+              <input id="change-cmd-input" type="text" placeholder="Scrivi nome comandante..." autocomplete="off" />
               <button id="btn-change-cmd-search" type="button" class="btn primary small">Cerca</button>
             </div>
             <p id="change-cmd-status" class="status"></p>
@@ -238,7 +241,6 @@
 
             <div id="card-preview-oracle" class="card-oracle-box"></div>
 
-            <!-- CAMBIO ESPANSIONE -->
             <div class="card-detail-section">
               <label for="card-edition-select">Espansione / Stampa</label>
               <select id="card-edition-select">
@@ -246,13 +248,11 @@
               </select>
             </div>
 
-            <!-- PROXY TOGGLE -->
             <label class="card-proxy-toggle">
               <input id="card-proxy-chk" type="checkbox" />
               <span>Segna questa carta come <strong>Proxy</strong></span>
             </label>
 
-            <!-- GESTIONE TAG (CONDIVISI CON DESKTOP) -->
             <div class="card-detail-section">
               <label>Tag della carta</label>
               <div id="card-tags-chips" class="tags-chips-wrap"></div>
@@ -268,7 +268,6 @@
           </div>
         </div>
       </section>
-
       <!-- TAB 2: GRUPPI -->
       <section id="tab-groups" class="tab-panel">
         <div id="groups-list-view" class="card">
