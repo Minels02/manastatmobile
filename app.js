@@ -20,7 +20,7 @@ const DEFAULT_SCANNER_WS_URL = "wss://manastat-scanner-server.onrender.com/ws/sc
 const STORAGE_SETS_KEY = "manastat_scanner_selected_sets";
 
 // Badge versione sempre visibile sopra la barra di navigazione
-const APP_UI_VERSION = "v3.1";
+const APP_UI_VERSION = "v3.2";
 let connectedServerVersion = "";
 
 function renderVersionBadge() {
@@ -2645,7 +2645,379 @@ $("btn-close-card-preview")?.addEventListener("click", () => {
   activeDetailCardIdx = -1;
   $("card-preview-modal").classList.add("hidden");
 });
+// ---- IMPORTA LISTA MAZZO (TESTO / MOXFIELD / ARCHIDEKT / MANABOX) ----
+function parseDecklistText(rawText) {
+  const lines = String(rawText || "").split(/\r?\n/);
+  const parsed = [];
+  let inCommander = false;
+  let skipSection = false;
 
+  const sectionRx =
+    /^(commander|deck|mainboard|main|sideboard|maybeboard|considering|companion|creatures?|planeswalkers?|instants?|sorceries|sorcery|artifacts?|enchantments?|battles?|lands?|other|about)\b/i;
+
+  for (const rawLine of lines) {
+    let line = rawLine.trim();
+    if (!line) {
+      if (inCommander && parsed.some((p) => p.is_commander)) inCommander = false;
+      continue;
+    }
+    if (line.startsWith("//") || line.startsWith("#")) continue;
+
+    if (!/^\d/.test(line) && sectionRx.test(line)) {
+      const lower = line.toLowerCase();
+      inCommander = lower.startsWith("commander");
+      skipSection =
+        lower.startsWith("sideboard") ||
+        lower.startsWith("maybeboard") ||
+        lower.startsWith("considering");
+      continue;
+    }
+    if (skipSection) continue;
+
+    let isFoil = false;
+    let isCommander = inCommander;
+
+    if (/\*f\*|\(foil\)|\[foil\]/i.test(line)) {
+      isFoil = true;
+      line = line.replace(/\*f\*|\(foil\)|\[foil\]/gi, "").trim();
+    }
+    if (/\*cmdr\*|\(commander\)|#commander\b/i.test(line)) {
+      isCommander = true;
+      line = line.replace(/\*cmdr\*|\(commander\)|#commander\b/gi, "").trim();
+    }
+
+    // Rimuove eventuali tag inline tipo #Ramp o ^Have^
+    line = line.replace(/\s+#\S+/g, "").replace(/\^[^^]+\^/g, "").trim();
+
+    let qty = 1;
+    const qtyMatch = line.match(/^(\d+)\s*x?\s+(.+)$/i);
+    if (qtyMatch) {
+      qty = Math.max(1, parseInt(qtyMatch[1], 10));
+      line = qtyMatch[2].trim();
+    }
+
+    let setCode = "";
+    let collectorNumber = "";
+    const setNumMatch = line.match(/^(.+?)\s*\(([a-z0-9]{2,6})\)\s*#?([a-z0-9\-★]+)?\s*$/i);
+    if (setNumMatch) {
+      line = setNumMatch[1].trim();
+      setCode = setNumMatch[2].toLowerCase();
+      collectorNumber = (setNumMatch[3] || "").trim();
+    }
+
+    const name = line.trim();
+    if (!name) continue;
+
+    parsed.push({ qty, name, setCode, collectorNumber, isFoil, isCommander });
+  }
+
+  // Accorpa eventuali righe duplicate
+  const merged = new Map();
+  for (const item of parsed) {
+    const key = `${item.name.toLowerCase()}|${item.setCode}|${item.collectorNumber}|${item.isFoil ? 1 : 0}|${item.isCommander ? 1 : 0}`;
+    if (merged.has(key)) {
+      merged.get(key).qty += item.qty;
+    } else {
+      merged.set(key, { ...item });
+    }
+  }
+  return Array.from(merged.values());
+}
+
+async function fetchScryfallBatchForImport(items, useSetAndNum) {
+  const bySetNum = new Map();
+  const byName = new Map();
+
+  for (let i = 0; i < items.length; i += 75) {
+    const chunk = items.slice(i, i + 75);
+    const identifiers = chunk
+      .map((it) => {
+        if (useSetAndNum && it.setCode && it.collectorNumber) {
+          return { set: it.setCode, collector_number: it.collectorNumber };
+        }
+        const front = it.name.split("//")[0].trim();
+        return front ? { name: front } : null;
+      })
+      .filter(Boolean);
+
+    if (!identifiers.length) continue;
+
+    const resp = await fetch("https://api.scryfall.com/cards/collection", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ identifiers }),
+    });
+    if (!resp.ok) continue;
+    const json = await resp.json();
+
+    for (const sc of json.data || []) {
+      const scSet = String(sc.set || "").toLowerCase();
+      const scNum = String(sc.collector_number || "").toLowerCase();
+      if (scSet && scNum) bySetNum.set(`${scSet}|${scNum}`, sc);
+      if (sc.name) {
+        byName.set(sc.name.toLowerCase(), sc);
+        byName.set(sc.name.split("//")[0].trim().toLowerCase(), sc);
+      }
+    }
+  }
+
+  return { bySetNum, byName };
+}
+
+$("btn-open-import-deck")?.addEventListener("click", () => {
+  if (!selectedDeckId) return;
+  if ($("import-deck-textarea")) $("import-deck-textarea").value = "";
+  setStatus($("import-deck-status"), "");
+  $("import-deck-modal")?.classList.remove("hidden");
+  setTimeout(() => $("import-deck-textarea")?.focus(), 50);
+});
+
+$("btn-cancel-import-deck")?.addEventListener("click", () => {
+  $("import-deck-modal")?.classList.add("hidden");
+});
+
+$("btn-run-import-deck")?.addEventListener("click", async () => {
+  if (!selectedDeckId) return;
+  const raw = ($("import-deck-textarea")?.value || "").trim();
+  const items = parseDecklistText(raw);
+
+  if (!items.length) {
+    setStatus($("import-deck-status"), "Incolla almeno una carta valida.", "err");
+    return;
+  }
+
+  const mode = document.querySelector('input[name="import-deck-mode"]:checked')?.value || "merge";
+  if (mode === "replace" && currentDeckCards.length > 0) {
+    if (!confirm(`Sostituire tutte le ${currentDeckCards.length} carte attuali con la lista importata?`)) {
+      return;
+    }
+  }
+
+  const btnRun = $("btn-run-import-deck");
+  if (btnRun) btnRun.disabled = true;
+
+  try {
+    setStatus($("import-deck-status"), `Ricerca di ${items.length} carte su Scryfall...`);
+
+    // 1° passaggio: usa set + collector_number dove presenti
+    const pass1 = await fetchScryfallBatchForImport(items, true);
+    const resolved = [];
+    const retryByName = [];
+
+    for (const it of items) {
+      const frontLower = it.name.split("//")[0].trim().toLowerCase();
+      const sc =
+        (it.setCode && it.collectorNumber && pass1.bySetNum.get(`${it.setCode}|${it.collectorNumber.toLowerCase()}`)) ||
+        pass1.byName.get(it.name.toLowerCase()) ||
+        pass1.byName.get(frontLower);
+
+      if (sc) {
+        resolved.push({ it, sc });
+      } else {
+        retryByName.push(it);
+      }
+    }
+
+    // 2° passaggio di fallback: solo per nome per eventuali stampe non trovate
+    const notFound = [];
+    if (retryByName.length > 0) {
+      const pass2 = await fetchScryfallBatchForImport(retryByName, false);
+      for (const it of retryByName) {
+        const frontLower = it.name.split("//")[0].trim().toLowerCase();
+        const sc = pass2.byName.get(it.name.toLowerCase()) || pass2.byName.get(frontLower);
+        if (sc) resolved.push({ it, sc });
+        else notFound.push(it.name);
+      }
+    }
+
+    if (!resolved.length) {
+      setStatus($("import-deck-status"), "Nessuna carta riconosciuta su Scryfall.", "err");
+      return;
+    }
+
+    setStatus($("import-deck-status"), `Salvataggio di ${resolved.length} carte su Supabase...`);
+
+    // Mappa quantità precedenti per aggiornare correttamente il changelog desktop
+    const prevQtyMap = new Map();
+    for (const c of currentDeckCards) {
+      const k = String(c.name || "").trim().toLowerCase();
+      if (!k) continue;
+      const cur = prevQtyMap.get(k) || { name: c.name, qty: 0 };
+      cur.qty += Math.max(1, Number(c.quantity || 1));
+      prevQtyMap.set(k, cur);
+    }
+
+    const curDeck = myDecks.find((d) => String(d.id) === String(selectedDeckId));
+    const isCmdFmt = isCommanderFormat(curDeck?.format || curDeck?.type || "");
+
+    const buildCardObj = (it, sc) => {
+      const normalUrl = sc.image_uris?.normal || sc.card_faces?.[0]?.image_uris?.normal || "";
+      const manaCost = extractManaCostFromScryfall(sc);
+      const oracleText = extractOracleTextFromScryfall(sc);
+      const colorIdentity = resolveCardColorIdentity({
+        color_identity: sc.color_identity,
+        colors: sc.colors,
+        mana_cost: manaCost,
+        oracle_text: oracleText,
+      });
+      const setLower = String(sc.set || it.setCode || "").trim().toLowerCase();
+      return {
+        deck_id: selectedDeckId,
+        scryfall_id: sc.id || "",
+        name: sc.name || it.name,
+        type_line: sc.type_line || "",
+        oracle_text: oracleText,
+        mana_cost: manaCost,
+        image_url: normalUrl,
+        card_image_url: normalUrl,
+        color_identity: colorIdentity,
+        set: setLower,
+        set_code: setLower.toUpperCase(),
+        set_name: sc.set_name || "",
+        collector_number: sc.collector_number || it.collectorNumber || "",
+        foil: Boolean(it.isFoil),
+        price_eur: extractScryfallEurPrice(sc, Boolean(it.isFoil)),
+        quantity: it.isCommander ? 1 : it.qty,
+        is_commander: Boolean(isCmdFmt && it.isCommander),
+        is_proxy: false,
+        tags: [],
+      };
+    };
+
+    let cmdArtUrl = "";
+    const importedObjs = resolved.map(({ it, sc }) => {
+      const obj = buildCardObj(it, sc);
+      if (obj.is_commander && !cmdArtUrl) {
+        cmdArtUrl = sc.image_uris?.art_crop || sc.card_faces?.[0]?.image_uris?.art_crop || obj.image_url;
+      }
+      return obj;
+    });
+
+    if (mode === "replace") {
+      await sb.from("deck_cards").delete().eq("deck_id", selectedDeckId);
+      const insertedAll = [];
+      for (let i = 0; i < importedObjs.length; i += 100) {
+        const chunk = importedObjs.slice(i, i + 100);
+        const dbRows = chunk.map((c) => ({
+          deck_id: c.deck_id,
+          scryfall_id: c.scryfall_id,
+          name: c.name,
+          type_line: c.type_line,
+          oracle_text: c.oracle_text,
+          mana_cost: c.mana_cost,
+          image_url: c.image_url,
+          quantity: c.quantity,
+          is_commander: c.is_commander,
+        }));
+        const { data: ins, error: insErr } = await sb
+          .from("deck_cards")
+          .insert(dbRows)
+          .select("id, name, scryfall_id");
+        if (insErr) throw insErr;
+
+        chunk.forEach((c, idx) => {
+          insertedAll.push({ ...c, id: ins?.[idx]?.id || undefined });
+        });
+      }
+      currentDeckCards = insertedAll;
+    } else {
+      const toInsert = [];
+      for (const imp of importedObjs) {
+        const existing = currentDeckCards.find(
+          (c) =>
+            (imp.scryfall_id && c.scryfall_id === imp.scryfall_id) ||
+            String(c.name || "").toLowerCase() === String(imp.name || "").toLowerCase()
+        );
+        if (existing) {
+          if (!existing.is_commander) {
+            existing.quantity = Math.max(1, Number(existing.quantity || 1)) + imp.quantity;
+            if (existing.id) {
+              await sb.from("deck_cards").update({ quantity: existing.quantity }).eq("id", existing.id);
+            }
+          }
+        } else {
+          toInsert.push(imp);
+        }
+      }
+
+      if (toInsert.length > 0) {
+        for (let i = 0; i < toInsert.length; i += 100) {
+          const chunk = toInsert.slice(i, i + 100);
+          const dbRows = chunk.map((c) => ({
+            deck_id: c.deck_id,
+            scryfall_id: c.scryfall_id,
+            name: c.name,
+            type_line: c.type_line,
+            oracle_text: c.oracle_text,
+            mana_cost: c.mana_cost,
+            image_url: c.image_url,
+            quantity: c.quantity,
+            is_commander: c.is_commander,
+          }));
+          const { data: ins, error: insErr } = await sb
+            .from("deck_cards")
+            .insert(dbRows)
+            .select("id");
+          if (insErr) throw insErr;
+
+          chunk.forEach((c, idx) => {
+            currentDeckCards.push({ ...c, id: ins?.[idx]?.id || undefined });
+          });
+        }
+      }
+    }
+
+    // Calcola le differenze di quantità per il changelog condiviso con l'app desktop
+    const nextQtyMap = new Map();
+    for (const c of currentDeckCards) {
+      const k = String(c.name || "").trim().toLowerCase();
+      if (!k) continue;
+      const cur = nextQtyMap.get(k) || { name: c.name, qty: 0 };
+      cur.qty += Math.max(1, Number(c.quantity || 1));
+      nextQtyMap.set(k, cur);
+    }
+
+    const allKeys = new Set([...prevQtyMap.keys(), ...nextQtyMap.keys()]);
+    for (const k of allKeys) {
+      const oldQty = prevQtyMap.get(k)?.qty || 0;
+      const newQty = nextQtyMap.get(k)?.qty || 0;
+      const cardName = nextQtyMap.get(k)?.name || prevQtyMap.get(k)?.name || "";
+      if (oldQty !== newQty && cardName) {
+        currentDeckChangelog = applyCardDeltaToChangelog(
+          currentDeckChangelog,
+          currentDeckHistory,
+          cardName,
+          oldQty,
+          newQty
+        );
+      }
+    }
+
+    const extra = cmdArtUrl && (!extractDeckImageUrl(curDeck) || mode === "replace")
+      ? { bg_image_url: cmdArtUrl }
+      : {};
+    if (extra.bg_image_url) applyDeckHeroBg(extra.bg_image_url);
+
+    updateDeckCardCountAndCi();
+    renderDeckCardsList(currentDeckCards);
+    await syncDeckCardsJson(selectedDeckId, extra);
+
+    if (notFound.length > 0) {
+      setStatus(
+        $("import-deck-status"),
+        `Importate ${resolved.length} carte. Non trovate (${notFound.length}): ${notFound.slice(0, 5).join(", ")}${notFound.length > 5 ? "…" : ""}`,
+        "err"
+      );
+    } else {
+      $("import-deck-modal")?.classList.add("hidden");
+      setStatus($("deck-cards-status"), `Importate ${resolved.length} carte!`, "ok");
+    }
+  } catch (err) {
+    setStatus($("import-deck-status"), `Errore importazione: ${err.message || err}`, "err");
+  } finally {
+    if (btnRun) btnRun.disabled = false;
+  }
+});
 // ---- PAGINA GRUPPI ----
 async function loadGroups() {
   setStatus($("group-list-status"), "Caricamento gruppi...");
