@@ -20,7 +20,7 @@ const DEFAULT_SCANNER_WS_URL = "wss://manastat-scanner-server.onrender.com/ws/sc
 const STORAGE_SETS_KEY = "manastat_scanner_selected_sets";
 
 // Badge versione sempre visibile sopra la barra di navigazione
-const APP_UI_VERSION = "v3.2";
+const APP_UI_VERSION = "v3.3";
 let connectedServerVersion = "";
 
 function renderVersionBadge() {
@@ -3181,9 +3181,126 @@ $("btn-run-import-deck")?.addEventListener("click", async () => {
     if (btnRun) btnRun.disabled = false;
   }
 });
-// ---- PAGINA GRUPPI ----
+// ---- GROUPS PAGE (DESKTOP PARITY) ----
+let groupInvitations = [];
+let groupMatchesData = { matches: [], players: [] };
+let groupPlayerLb = [];
+let groupDeckLb = [];
+let groupProfilesMap = {};
+
+// Sub-tab switch inside Group Detail
+document.querySelectorAll(".group-subtab-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const targetId = btn.dataset.gsubtab;
+    document.querySelectorAll(".group-subtab-btn").forEach((b) => b.classList.toggle("active", b === btn));
+    document.querySelectorAll(".group-subpanel").forEach((p) => {
+      p.classList.toggle("hidden", p.id !== targetId);
+      p.classList.toggle("active", p.id === targetId);
+    });
+  });
+});
+
+function switchGroupSubtab(targetId) {
+  const btn = document.querySelector(`.group-subtab-btn[data-gsubtab="${targetId}"]`);
+  if (btn) btn.click();
+}
+
+function renderMiniAvatarHtml(name, avatarUrl) {
+  const cleanUrl = String(avatarUrl || "").trim();
+  if (cleanUrl) {
+    return `<span class="mini-avatar"><img src="${escapeHtml(cleanUrl)}" alt="" loading="lazy" /></span>`;
+  }
+  const initial = (String(name || "?").trim().slice(0, 1) || "?").toUpperCase();
+  return `<span class="mini-avatar">${escapeHtml(initial)}</span>`;
+}
+
+async function loadGroupInvitations() {
+  const box = $("group-invites-section");
+  const listEl = $("group-invites-list");
+  if (!box || !listEl || !currentUser) return;
+
+  try {
+    const { data, error } = await sb
+      .from("group_invitations")
+      .select("id, group_id, inviter_id, status, created_at")
+      .eq("invitee_id", currentUser.id)
+      .eq("status", "pending")
+      .order("created_at", { ascending: false });
+
+    if (error || !data || !data.length) {
+      groupInvitations = [];
+      box.classList.add("hidden");
+      listEl.innerHTML = "";
+      return;
+    }
+
+    const gIds = Array.from(new Set(data.map((r) => r.group_id).filter(Boolean)));
+    const inviterIds = Array.from(new Set(data.map((r) => r.inviter_id).filter(Boolean)));
+
+    const [{ data: gRows }, { data: pRows }] = await Promise.all([
+      gIds.length ? sb.from("groups").select("id, name").in("id", gIds) : { data: [] },
+      inviterIds.length ? sb.from("profiles").select("id, nickname").in("id", inviterIds) : { data: [] },
+    ]);
+
+    const gMap = Object.fromEntries((gRows || []).map((g) => [g.id, g.name || "Group"]));
+    const pMap = Object.fromEntries((pRows || []).map((p) => [p.id, p.nickname || "Player"]));
+
+    groupInvitations = data.map((inv) => ({
+      ...inv,
+      group_name: gMap[inv.group_id] || "Group",
+      inviter_name: pMap[inv.inviter_id] || "Player",
+    }));
+
+    box.classList.remove("hidden");
+    listEl.innerHTML = groupInvitations
+      .map(
+        (inv) => `
+          <div class="group-invite-row">
+            <div style="min-width:0;">
+              <div class="lb-name">${escapeHtml(inv.group_name)}</div>
+              <div class="lb-sub">Invited by ${escapeHtml(inv.inviter_name)}</div>
+            </div>
+            <div class="group-invite-actions">
+              <button type="button" class="group-invite-btn accept" onclick="respondGroupInvite('${escapeHtml(inv.id)}', true)">Accept</button>
+              <button type="button" class="group-invite-btn decline" onclick="respondGroupInvite('${escapeHtml(inv.id)}', false)">Decline</button>
+            </div>
+          </div>
+        `
+      )
+      .join("");
+  } catch {
+    box.classList.add("hidden");
+  }
+}
+
+window.respondGroupInvite = async function (inviteId, accept) {
+  const inv = groupInvitations.find((i) => String(i.id) === String(inviteId));
+  if (!inv) return;
+
+  setStatus($("group-list-status"), accept ? "Joining group..." : "Declining invitation...");
+  if (accept) {
+    const { error: memErr } = await sb
+      .from("group_members")
+      .insert({ group_id: inv.group_id, user_id: currentUser.id });
+    if (memErr && !String(memErr.message || "").toLowerCase().includes("duplicate")) {
+      setStatus($("group-list-status"), memErr.message, "err");
+      return;
+    }
+  }
+
+  await sb
+    .from("group_invitations")
+    .update({ status: accept ? "accepted" : "declined" })
+    .eq("id", inviteId);
+
+  setStatus($("group-list-status"), accept ? `Joined ${inv.group_name}!` : "Invitation declined.", "ok");
+  await loadGroups();
+};
+
 async function loadGroups() {
-  setStatus($("group-list-status"), "Caricamento gruppi...");
+  setStatus($("group-list-status"), "Loading groups...");
+  await loadGroupInvitations();
+
   const { data: memberships, error } = await sb
     .from("group_members")
     .select("group_id")
@@ -3198,59 +3315,145 @@ async function loadGroups() {
   if (!groupIds.length) {
     myGroups = [];
     setStatus($("group-list-status"), "");
-    $("groups-list-container").innerHTML = `<p class="muted">Non fai ancora parte di nessun gruppo.</p>`;
+    $("groups-list-container").innerHTML = `<p class="muted">You are not part of any group yet. Tap + at the top right to create one.</p>`;
     return;
   }
 
-  const { data: groupsData, error: gErr } = await sb
-    .from("groups")
-    .select("id, name")
-    .in("id", groupIds)
-    .order("name", { ascending: true });
+  const [{ data: groupsData, error: gErr }, { data: allMembers }, { data: allMatches }] = await Promise.all([
+    sb.from("groups").select("id, name, owner_id, created_at").in("id", groupIds).order("name", { ascending: true }),
+    sb.from("group_members").select("group_id, user_id").in("group_id", groupIds),
+    sb.from("matches").select("group_id, created_at").in("group_id", groupIds),
+  ]);
 
   if (gErr) {
     setStatus($("group-list-status"), gErr.message, "err");
     return;
   }
 
-  myGroups = groupsData || [];
+  const memberCountByGroup = {};
+  for (const m of allMembers || []) {
+    memberCountByGroup[m.group_id] = (memberCountByGroup[m.group_id] || 0) + 1;
+  }
+
+  const matchStatsByGroup = {};
+  for (const mt of allMatches || []) {
+    const gid = mt.group_id;
+    if (!matchStatsByGroup[gid]) matchStatsByGroup[gid] = { count: 0, last: "" };
+    matchStatsByGroup[gid].count += 1;
+    const dt = String(mt.created_at || "").slice(0, 10);
+    if (dt > matchStatsByGroup[gid].last) matchStatsByGroup[gid].last = dt;
+  }
+
+  myGroups = (groupsData || []).map((g) => ({
+    ...g,
+    members_count: memberCountByGroup[g.id] || 1,
+    matches_count: matchStatsByGroup[g.id]?.count || 0,
+    last_match: matchStatsByGroup[g.id]?.last || "",
+  }));
+
   setStatus($("group-list-status"), "");
   renderGroupsList();
 }
 
 function renderGroupsList() {
   const container = $("groups-list-container");
+  const q = ($("groups-search-input")?.value || "").trim().toLowerCase();
+
   if (!myGroups.length) {
-    container.innerHTML = `<p class="muted">Nessun gruppo trovato.</p>`;
+    container.innerHTML = `<p class="muted">No groups found.</p>`;
     return;
   }
 
-  container.innerHTML = myGroups
-    .map(
-      (g) => `
+  const filtered = q
+    ? myGroups.filter((g) => String(g.name || "").toLowerCase().includes(q))
+    : myGroups;
+
+  if (!filtered.length) {
+    container.innerHTML = `<p class="muted">No groups match your search.</p>`;
+    return;
+  }
+
+  container.innerHTML = filtered
+    .map((g) => {
+      const isOwner = String(g.owner_id || "") === String(currentUser?.id || "");
+      const roleHtml = `<span class="group-role-pill ${isOwner ? "owner" : ""}">${isOwner ? "Owner" : "Member"}</span>`;
+      const memTxt = g.members_count === 1 ? "1 member" : `${g.members_count} members`;
+      const matTxt = g.matches_count === 1 ? "1 match" : `${g.matches_count} matches`;
+      const lastTxt = g.last_match ? ` · Last: ${formatFullDateIt(g.last_match)}` : "";
+      return `
         <div class="group-card" onclick="openGroupDetail('${escapeHtml(g.id)}')">
-          <div>
-            <div class="group-card-title">${escapeHtml(g.name || "Gruppo")}</div>
-            <div class="muted">Tocca per registrare una partita</div>
+          <div style="min-width:0;">
+            <div class="group-card-title">${escapeHtml(g.name || "Group")}${roleHtml}</div>
+            <div class="group-card-meta">${memTxt} · ${matTxt}${escapeHtml(lastTxt)}</div>
           </div>
           <div class="deck-banner-arrow">›</div>
         </div>
-      `
-    )
+      `;
+    })
     .join("");
 }
 
+$("groups-search-input")?.addEventListener("input", renderGroupsList);
+
+// ---- CREATE NEW GROUP ----
+$("btn-open-new-group")?.addEventListener("click", () => {
+  if ($("new-group-name")) $("new-group-name").value = "";
+  setStatus($("new-group-status"), "");
+  $("new-group-modal")?.classList.remove("hidden");
+  setTimeout(() => $("new-group-name")?.focus(), 50);
+});
+
+$("btn-cancel-new-group")?.addEventListener("click", () => {
+  $("new-group-modal")?.classList.add("hidden");
+});
+
+$("btn-create-new-group")?.addEventListener("click", async () => {
+  const name = ($("new-group-name")?.value || "").trim();
+  if (!name) {
+    setStatus($("new-group-status"), "Group name cannot be empty.", "err");
+    return;
+  }
+
+  setStatus($("new-group-status"), "Creating group...");
+  const { data: grp, error } = await sb
+    .from("groups")
+    .insert({ name, owner_id: currentUser.id })
+    .select("*")
+    .single();
+
+  if (error || !grp) {
+    setStatus($("new-group-status"), error?.message || "Error creating group.", "err");
+    return;
+  }
+
+  await sb.from("group_members").insert({ group_id: grp.id, user_id: currentUser.id });
+
+  $("new-group-modal")?.classList.add("hidden");
+  await loadGroups();
+  openGroupDetail(grp.id);
+});
+
+// ---- GROUP DETAIL ----
 window.openGroupDetail = async function (groupId) {
   const grp = myGroups.find((g) => String(g.id) === String(groupId));
   if (!grp) return;
 
   selectedGroupId = grp.id;
-  $("group-detail-title").textContent = grp.name || "Gruppo";
-  $("group-players-container").innerHTML = `<p class="muted">Caricamento partecipanti e mazzi...</p>`;
+  const isOwner = String(grp.owner_id || "") === String(currentUser?.id || "");
+  $("group-detail-title").textContent = grp.name || "Group";
+  $("group-detail-role").textContent = isOwner ? "Owner" : "Member";
+  $("btn-rename-group")?.classList.toggle("hidden", !isOwner);
+  if ($("btn-leave-group")) {
+    $("btn-leave-group").textContent = grp.members_count <= 1 ? "Delete" : "Leave";
+  }
+
   setStatus($("group-status"), "");
+  setStatus($("group-decks-status"), "");
+  setStatus($("group-members-status"), "");
 
   $("groups-list-view").classList.add("hidden");
   $("group-detail-view").classList.remove("hidden");
+  switchGroupSubtab("group-sub-stats");
 
   await loadGroupDetails(grp.id);
 };
@@ -3261,66 +3464,355 @@ $("btn-back-to-groups")?.addEventListener("click", () => {
   $("groups-list-view").classList.remove("hidden");
 });
 
+$("btn-rename-group")?.addEventListener("click", async () => {
+  if (!selectedGroupId) return;
+  const grp = myGroups.find((g) => String(g.id) === String(selectedGroupId));
+  const newName = prompt("New group name:", grp?.name || "");
+  if (newName === null) return;
+  const clean = newName.trim();
+  if (!clean) return;
+
+  const { error } = await sb.from("groups").update({ name: clean }).eq("id", selectedGroupId);
+  if (error) {
+    alert(`Error renaming group: ${error.message}`);
+    return;
+  }
+  if (grp) grp.name = clean;
+  $("group-detail-title").textContent = clean;
+  renderGroupsList();
+});
+
+$("btn-leave-group")?.addEventListener("click", async () => {
+  if (!selectedGroupId) return;
+  const grp = myGroups.find((g) => String(g.id) === String(selectedGroupId));
+  const isLastMember = (grp?.members_count || 1) <= 1;
+  const msg = isLastMember
+    ? `Permanently delete "${grp?.name || "this group"}"?`
+    : `Leave "${grp?.name || "this group"}"? The group will remain active for other members.`;
+  if (!confirm(msg)) return;
+
+  const targetId = selectedGroupId;
+  const { error: rpcErr } = await sb.rpc("leave_group_safe", { p_group_id: targetId });
+  if (rpcErr) {
+    // Fallback if RPC is unavailable
+    await sb.from("group_members").delete().eq("group_id", targetId).eq("user_id", currentUser.id);
+    if (isLastMember) {
+      await sb.from("groups").delete().eq("id", targetId);
+    }
+  }
+
+  selectedGroupId = null;
+  $("group-detail-view").classList.add("hidden");
+  $("groups-list-view").classList.remove("hidden");
+  await loadGroups();
+});
+
 async function loadGroupDetails(groupId) {
   if (!groupId) return;
 
-  const [{ data: members }, { data: decks }] = await Promise.all([
-    sb.from("group_members").select("user_id").eq("group_id", groupId),
-    sb.from("group_decks").select("*").eq("group_id", groupId),
+  const [
+    { data: members },
+    { data: decks },
+    { data: matches },
+    playerLbRes,
+    deckLbRes,
+  ] = await Promise.all([
+    sb.from("group_members").select("user_id, role").eq("group_id", groupId),
+    sb.from("group_decks").select("*").eq("group_id", groupId).order("name", { ascending: true }),
+    sb.from("matches").select("id, created_at, played_on, notes").eq("group_id", groupId).order("created_at", { ascending: false }).limit(200),
+    sb.rpc("group_player_leaderboard", { group_id_in: groupId }),
+    sb.rpc("group_deck_leaderboard", { group_id_in: groupId }),
   ]);
 
-  const memberIds = (members || []).map((m) => m.user_id);
+  const matchRows = matches || [];
+  const matchIds = matchRows.map((m) => m.id).filter(Boolean);
+  let matchPlayers = [];
+  if (matchIds.length) {
+    const { data: mpData } = await sb
+      .from("match_players")
+      .select("match_id, user_id, group_deck_id, is_winner, seat")
+      .in("match_id", matchIds);
+    matchPlayers = mpData || [];
+  }
+
   groupDecks = decks || [];
+  groupMatchesData = { matches: matchRows, players: matchPlayers };
+
+  // Collect all user IDs (current members + past players in history)
+  const allUserIds = Array.from(
+    new Set([
+      ...(members || []).map((m) => m.user_id),
+      ...matchPlayers.map((p) => p.user_id),
+      ...groupDecks.map((d) => d.owner_id || d.user_id),
+    ].filter(Boolean))
+  );
 
   let profiles = [];
-  if (memberIds.length) {
+  if (allUserIds.length) {
     const { data: profData } = await sb
       .from("profiles")
-      .select("id, nickname")
-      .in("id", memberIds);
+      .select("id, nickname, avatar_url")
+      .in("id", allUserIds);
     profiles = profData || [];
   }
 
-  const nickMap = Object.fromEntries(profiles.map((p) => [p.id, p.nickname || p.id.slice(0, 6)]));
-  groupMembers = memberIds.map((uid) => ({ user_id: uid, name: nickMap[uid] || uid.slice(0, 6) }));
+  groupProfilesMap = Object.fromEntries(
+    profiles.map((p) => [
+      p.id,
+      {
+        name: (p.nickname || "").trim() || p.id.slice(0, 6),
+        avatar_url: (p.avatar_url || "").trim(),
+      },
+    ])
+  );
 
+  const memberIds = (members || []).map((m) => m.user_id);
+  groupMembers = memberIds.map((uid) => ({
+    user_id: uid,
+    name: groupProfilesMap[uid]?.name || uid.slice(0, 6),
+    avatar_url: groupProfilesMap[uid]?.avatar_url || "",
+  }));
+
+  // Player Leaderboard (RPC or fallback from match_players)
+  if (!playerLbRes.error && Array.isArray(playerLbRes.data)) {
+    groupPlayerLb = playerLbRes.data.map((r) => {
+      const games = Number(r.games || 0);
+      const wins = Number(r.wins || 0);
+      return {
+        user_id: r.user_id,
+        matches: games,
+        wins,
+        winrate: games > 0 ? (wins / games) * 100 : 0,
+      };
+    });
+  } else {
+    const byUser = new Map();
+    for (const p of matchPlayers) {
+      const cur = byUser.get(p.user_id) || { user_id: p.user_id, matches: 0, wins: 0 };
+      cur.matches += 1;
+      if (p.is_winner) cur.wins += 1;
+      byUser.set(p.user_id, cur);
+    }
+    groupPlayerLb = Array.from(byUser.values())
+      .map((r) => ({ ...r, winrate: r.matches > 0 ? (r.wins / r.matches) * 100 : 0 }))
+      .sort((a, b) => b.winrate - a.winrate || b.wins - a.wins);
+  }
+
+  // Deck Leaderboard (RPC or fallback from match_players)
+  if (!deckLbRes.error && Array.isArray(deckLbRes.data)) {
+    groupDeckLb = deckLbRes.data.map((r) => {
+      const games = Number(r.games || 0);
+      const wins = Number(r.wins || 0);
+      return {
+        deck_id: r.deck_id,
+        matches: games,
+        wins,
+        winrate: games > 0 ? (wins / games) * 100 : 0,
+      };
+    });
+  } else {
+    const byDeck = new Map();
+    for (const p of matchPlayers) {
+      if (!p.group_deck_id) continue;
+      const cur = byDeck.get(p.group_deck_id) || { deck_id: p.group_deck_id, matches: 0, wins: 0 };
+      cur.matches += 1;
+      if (p.is_winner) cur.wins += 1;
+      byDeck.set(p.group_deck_id, cur);
+    }
+    groupDeckLb = Array.from(byDeck.values())
+      .map((r) => ({ ...r, winrate: r.matches > 0 ? (r.wins / r.matches) * 100 : 0 }))
+      .sort((a, b) => b.winrate - a.winrate || b.wins - a.wins);
+  }
+
+  const grp = myGroups.find((g) => String(g.id) === String(groupId));
+  if (grp) {
+    grp.members_count = groupMembers.length;
+    grp.matches_count = matchRows.length;
+  }
+  const activeDecksCount = groupDecks.filter((d) => !d.archived_at).length;
+  if ($("group-detail-meta")) {
+    $("group-detail-meta").textContent =
+      `${groupMembers.length} members · ${activeDecksCount} decks · ${matchRows.length} matches`;
+  }
+  if ($("btn-leave-group")) {
+    $("btn-leave-group").textContent = groupMembers.length <= 1 ? "Delete" : "Leave";
+  }
+
+  renderGroupLeaderboards();
+  renderGroupMatchesHistory();
   renderGroupPlayers();
+  renderGroupDecksSection();
+  renderGroupMembersSection();
 }
 
-function getDecksForMember(userId, allGroupDecks) {
-  const owned = allGroupDecks.filter((d) => {
+function renderGroupLeaderboards() {
+  // Players
+  const pBox = $("group-player-lb");
+  if (!groupPlayerLb.length) {
+    pBox.innerHTML = `<p class="muted">No matches logged yet.</p>`;
+  } else {
+    pBox.innerHTML = groupPlayerLb
+      .map((r, i) => {
+        const prof = groupProfilesMap[r.user_id] || { name: r.user_id?.slice(0, 6) || "Player", avatar_url: "" };
+        const rankCls = i === 0 ? "top1" : i === 1 ? "top2" : i === 2 ? "top3" : "";
+        return `
+          <div class="lb-row">
+            <span class="lb-rank ${rankCls}">#${i + 1}</span>
+            ${renderMiniAvatarHtml(prof.name, prof.avatar_url)}
+            <div class="lb-main">
+              <div class="lb-name">${escapeHtml(prof.name)}</div>
+              <div class="lb-sub">${r.wins}W / ${r.matches}M</div>
+              <div class="lb-bar-wrap"><div class="lb-bar-fill" style="width:${Math.round(r.winrate)}%;"></div></div>
+            </div>
+            <span class="lb-wr">${r.winrate.toFixed(1)}%</span>
+          </div>
+        `;
+      })
+      .join("");
+  }
+
+  // Decks
+  const dBox = $("group-deck-lb");
+  if (!groupDeckLb.length) {
+    dBox.innerHTML = `<p class="muted">No deck stats yet.</p>`;
+  } else {
+    const deckMap = Object.fromEntries(groupDecks.map((d) => [d.id, d]));
+    dBox.innerHTML = groupDeckLb
+      .map((r, i) => {
+        const dObj = deckMap[r.deck_id];
+        const dName = dObj?.name || "Archived Deck";
+        const ownerId = dObj?.owner_id || dObj?.user_id || "";
+        const ownerName = ownerId ? (groupProfilesMap[ownerId]?.name || "") : "";
+        const rankCls = i === 0 ? "top1" : i === 1 ? "top2" : i === 2 ? "top3" : "";
+        return `
+          <div class="lb-row">
+            <span class="lb-rank ${rankCls}">#${i + 1}</span>
+            <div class="lb-main">
+              <div class="lb-name">${escapeHtml(dName)}</div>
+              <div class="lb-sub">${ownerName ? `${escapeHtml(ownerName)} · ` : ""}${r.wins}W / ${r.matches}M</div>
+              <div class="lb-bar-wrap"><div class="lb-bar-fill" style="width:${Math.round(r.winrate)}%;"></div></div>
+            </div>
+            <span class="lb-wr">${r.winrate.toFixed(1)}%</span>
+          </div>
+        `;
+      })
+      .join("");
+  }
+}
+
+function renderGroupMatchesHistory() {
+  const box = $("group-matches-list");
+  const { matches, players } = groupMatchesData;
+  if (!matches.length) {
+    box.innerHTML = `<p class="muted">No matches recorded in this group yet.</p>`;
+    return;
+  }
+
+  const deckMap = Object.fromEntries(groupDecks.map((d) => [d.id, d.name || "Deck"]));
+  const playersByMatch = new Map();
+  for (const p of players) {
+    if (!playersByMatch.has(p.match_id)) playersByMatch.set(p.match_id, []);
+    playersByMatch.get(p.match_id).push(p);
+  }
+
+  // Group matches by day
+  const byDay = new Map();
+  for (const m of matches) {
+    const day = String(m.played_on || m.created_at || "").slice(0, 10) || "Unknown";
+    if (!byDay.has(day)) byDay.set(day, []);
+    byDay.get(day).push(m);
+  }
+
+  box.innerHTML = Array.from(byDay.entries())
+    .map(([day, list]) => {
+      const dayLabel = day === "Unknown" ? day : formatFullDateIt(day);
+      const countLbl = list.length === 1 ? "1 match" : `${list.length} matches`;
+      const cardsHtml = list
+        .map((m) => {
+          const plist = playersByMatch.get(m.id) || [];
+          const winner = plist.find((p) => p.is_winner);
+          const winnerName = winner ? (groupProfilesMap[winner.user_id]?.name || "Player") : "—";
+          const winnerDeck = winner?.group_deck_id ? deckMap[winner.group_deck_id] || "" : "";
+
+          const playersLines = plist
+            .map((p) => {
+              const pName = groupProfilesMap[p.user_id]?.name || "Player";
+              const dName = p.group_deck_id ? deckMap[p.group_deck_id] || "Deck" : "—";
+              const crown = p.is_winner ? "🏆 " : "• ";
+              return `<div>${crown}<strong>${escapeHtml(pName)}</strong> — ${escapeHtml(dName)}</div>`;
+            })
+            .join("");
+
+          return `
+            <div class="group-match-card">
+              <div class="group-match-top">
+                <span class="group-match-winner">🏆 ${escapeHtml(winnerName)}${winnerDeck ? ` (${escapeHtml(winnerDeck)})` : ""}</span>
+                <button type="button" class="history-del-btn" onclick="deleteGroupMatch('${escapeHtml(m.id)}')">Delete</button>
+              </div>
+              <div class="group-match-players">${playersLines}</div>
+              ${m.notes ? `<div class="group-match-notes">"${escapeHtml(m.notes)}"</div>` : ""}
+            </div>
+          `;
+        })
+        .join("");
+
+      return `
+        <div class="match-day-header"><span>${escapeHtml(dayLabel)}</span><span>${countLbl}</span></div>
+        ${cardsHtml}
+      `;
+    })
+    .join("");
+}
+
+window.deleteGroupMatch = async function (matchId) {
+  if (!matchId || !confirm("Delete this match from group history?")) return;
+  await sb.from("match_players").delete().eq("match_id", matchId);
+  const { error } = await sb.from("matches").delete().eq("id", matchId);
+  if (error) {
+    alert(`Failed to delete match: ${error.message}`);
+    return;
+  }
+  await loadGroupDetails(selectedGroupId);
+};
+
+// ---- LOG NEW MATCH ----
+function getActiveDecksForMember(userId) {
+  const active = groupDecks.filter((d) => !d.archived_at);
+  const owned = active.filter((d) => {
     const owner = d.owner_id ?? d.user_id ?? null;
     return owner && String(owner) === String(userId);
   });
   if (owned.length) return owned;
-
-  return allGroupDecks.filter((d) => !(d.owner_id ?? d.user_id));
+  return active.filter((d) => !(d.owner_id ?? d.user_id));
 }
 
 function renderGroupPlayers() {
   if (!groupMembers.length) {
-    $("group-players-container").innerHTML = `<p class="muted">Nessun membro trovato.</p>`;
+    $("group-players-container").innerHTML = `<p class="muted">No members found.</p>`;
     return;
   }
 
   $("group-players-container").innerHTML = groupMembers
     .map((m, idx) => {
-      const memberDecks = getDecksForMember(m.user_id, groupDecks);
+      const memberDecks = getActiveDecksForMember(m.user_id);
       const deckOpts = memberDecks.length
         ? memberDecks.map((d) => `<option value="${escapeHtml(d.id)}">${escapeHtml(d.name)}</option>`).join("")
-        : `<option value="" disabled>Nessun mazzo assegnato a ${escapeHtml(m.name)}</option>`;
+        : `<option value="" disabled>No decks assigned to ${escapeHtml(m.name)}</option>`;
 
       return `
         <div class="player-box">
-          <strong>${escapeHtml(m.name)}</strong>
-          <label>Mazzo usato</label>
+          <div class="group-member-left" style="margin-bottom:6px;">
+            ${renderMiniAvatarHtml(m.name, m.avatar_url)}
+            <strong>${escapeHtml(m.name)}</strong>
+          </div>
+          <label style="margin-top:4px;">Deck played</label>
           <select class="gp-deck" data-user-id="${escapeHtml(m.user_id)}">
-            <option value="">— Seleziona mazzo —</option>
+            <option value="">— Not playing / Select deck —</option>
             ${deckOpts}
           </select>
           <label class="winner-row">
             <input type="radio" name="winner" value="${escapeHtml(m.user_id)}" ${idx === 0 ? "checked" : ""} />
-            <span>Vincitore</span>
+            <span>Winner</span>
           </label>
         </div>
       `;
@@ -3334,7 +3826,7 @@ $("btn-save-group-match")?.addEventListener("click", async () => {
   const winnerId = winnerEl ? winnerEl.value : null;
 
   if (!selectedGroupId || !winnerId) {
-    setStatus($("group-status"), "Seleziona gruppo e vincitore.", "err");
+    setStatus($("group-status"), "Select a group and a winner.", "err");
     return;
   }
 
@@ -3352,11 +3844,15 @@ $("btn-save-group-match")?.addEventListener("click", async () => {
   });
 
   if (rows.length < 2) {
-    setStatus($("group-status"), "Seleziona un mazzo del gruppo per almeno 2 giocatori.", "err");
+    setStatus($("group-status"), "Select a deck for at least 2 participating players.", "err");
+    return;
+  }
+  if (!rows.some((r) => r.is_winner)) {
+    setStatus($("group-status"), "The selected winner must have a deck chosen.", "err");
     return;
   }
 
-  setStatus($("group-status"), "Salvataggio partita...");
+  setStatus($("group-status"), "Saving match...");
   const { data: matchRow, error: matchErr } = await sb
     .from("matches")
     .insert({
@@ -3382,9 +3878,284 @@ $("btn-save-group-match")?.addEventListener("click", async () => {
   }
 
   $("group-notes").value = "";
-  setStatus($("group-status"), "Partita di gruppo salvata! La ritroverai nell'app desktop.", "ok");
+  setStatus($("group-status"), "Match saved! Leaderboards updated.", "ok");
+  await loadGroupDetails(selectedGroupId);
+  switchGroupSubtab("group-sub-stats");
 });
 
+// ---- GROUP DECKS MANAGEMENT ----
+function renderGroupDecksSection() {
+  // Populate personal decks selector
+  const sel = $("group-import-personal-deck");
+  if (sel) {
+    sel.innerHTML =
+      `<option value="">— Select personal deck —</option>` +
+      myDecks
+        .map((d) => `<option value="${escapeHtml(d.id)}">${escapeHtml(d.name || "Untitled")} (${escapeHtml(getDeckFormatLabel(d))})</option>`)
+        .join("");
+  }
+
+  const listEl = $("group-decks-list");
+  const activeDecks = groupDecks.filter((d) => !d.archived_at);
+  if (!activeDecks.length) {
+    listEl.innerHTML = `<p class="muted">No active decks in this group yet.</p>`;
+    return;
+  }
+
+  // Group by owner (current user first)
+  const byOwner = new Map();
+  for (const d of activeDecks) {
+    const oid = String(d.owner_id || d.user_id || "shared");
+    if (!byOwner.has(oid)) byOwner.set(oid, []);
+    byOwner.get(oid).push(d);
+  }
+
+  const ownerKeys = Array.from(byOwner.keys()).sort((a, b) => {
+    if (a === String(currentUser.id)) return -1;
+    if (b === String(currentUser.id)) return 1;
+    const na = groupProfilesMap[a]?.name || "Shared";
+    const nb = groupProfilesMap[b]?.name || "Shared";
+    return na.localeCompare(nb, "en");
+  });
+
+  listEl.innerHTML = ownerKeys
+    .map((oid) => {
+      const ownerName = oid === String(currentUser.id)
+        ? `${groupProfilesMap[oid]?.name || "You"} (You)`
+        : groupProfilesMap[oid]?.name || "Shared";
+      const decks = byOwner.get(oid);
+      const isMine = oid === String(currentUser.id);
+      const rows = decks
+        .map(
+          (d) => `
+            <div class="group-deck-row">
+              <div class="lb-main">
+                <div class="lb-name">${escapeHtml(d.name || "Deck")}</div>
+                ${d.deck_id ? `<div class="lb-sub">Linked to personal deck</div>` : ""}
+              </div>
+              ${isMine ? `<button type="button" class="history-del-btn" onclick="removeGroupDeck('${escapeHtml(d.id)}')">Remove</button>` : ""}
+            </div>
+          `
+        )
+        .join("");
+      return `
+        <div class="match-day-header"><span>${escapeHtml(ownerName)}</span><span>${decks.length}</span></div>
+        ${rows}
+      `;
+    })
+    .join("");
+}
+
+async function addDeckToGroup(deckName, personalDeckId = null) {
+  const cleanName = String(deckName || "").trim();
+  if (!selectedGroupId || !cleanName) return;
+
+  setStatus($("group-decks-status"), "Adding deck...");
+
+  // Check if user already has an archived deck with the same name -> restore it
+  const archived = groupDecks.find(
+    (d) =>
+      d.archived_at &&
+      String(d.owner_id || d.user_id || "") === String(currentUser.id) &&
+      String(d.name || "").trim().toLowerCase() === cleanName.toLowerCase()
+  );
+
+  if (archived) {
+    const upd = { archived_at: null, name: cleanName };
+    if (personalDeckId) upd.deck_id = personalDeckId;
+    const { error } = await sb.from("group_decks").update(upd).eq("id", archived.id);
+    if (error) {
+      setStatus($("group-decks-status"), error.message, "err");
+      return;
+    }
+    setStatus($("group-decks-status"), `Restored "${cleanName}" with its history!`, "ok");
+    await loadGroupDetails(selectedGroupId);
+    return;
+  }
+
+  const payload = {
+    group_id: selectedGroupId,
+    owner_id: currentUser.id,
+    name: cleanName,
+  };
+  if (personalDeckId) payload.deck_id = personalDeckId;
+
+  const { error } = await sb.from("group_decks").insert(payload);
+  if (error) {
+    setStatus($("group-decks-status"), error.message, "err");
+    return;
+  }
+
+  setStatus($("group-decks-status"), `"${cleanName}" added to group!`, "ok");
+  await loadGroupDetails(selectedGroupId);
+}
+
+$("btn-add-personal-group-deck")?.addEventListener("click", async () => {
+  const deckId = $("group-import-personal-deck")?.value || "";
+  if (!deckId) {
+    setStatus($("group-decks-status"), "Select a personal deck first.", "err");
+    return;
+  }
+  const d = myDecks.find((x) => String(x.id) === String(deckId));
+  if (!d) return;
+  await addDeckToGroup(d.name, d.id);
+});
+
+$("btn-add-custom-group-deck")?.addEventListener("click", async () => {
+  const inp = $("group-custom-deck-name");
+  const name = (inp?.value || "").trim();
+  if (!name) {
+    setStatus($("group-decks-status"), "Enter a deck name.", "err");
+    return;
+  }
+  inp.value = "";
+  await addDeckToGroup(name, null);
+});
+
+window.removeGroupDeck = async function (groupDeckId) {
+  const d = groupDecks.find((x) => String(x.id) === String(groupDeckId));
+  if (!d || !confirm(`Remove "${d.name}" from this group?`)) return;
+
+  const { data: used } = await sb
+    .from("match_players")
+    .select("match_id")
+    .eq("group_deck_id", groupDeckId)
+    .limit(1);
+
+  if (used && used.length > 0) {
+    const { error } = await sb
+      .from("group_decks")
+      .update({ archived_at: new Date().toISOString() })
+      .eq("id", groupDeckId);
+    if (error) {
+      setStatus($("group-decks-status"), error.message, "err");
+      return;
+    }
+    setStatus($("group-decks-status"), `"${d.name}" archived (match stats preserved).`, "ok");
+  } else {
+    const { error } = await sb.from("group_decks").delete().eq("id", groupDeckId);
+    if (error) {
+      setStatus($("group-decks-status"), error.message, "err");
+      return;
+    }
+    setStatus($("group-decks-status"), `"${d.name}" removed.`, "ok");
+  }
+
+  await loadGroupDetails(selectedGroupId);
+};
+
+// ---- GROUP MEMBERS & INVITATIONS ----
+function renderGroupMembersSection() {
+  const listEl = $("group-members-list");
+  const grp = myGroups.find((g) => String(g.id) === String(selectedGroupId));
+  const ownerId = String(grp?.owner_id || "");
+  const amIOwner = ownerId === String(currentUser?.id || "");
+
+  if (!groupMembers.length) {
+    listEl.innerHTML = `<p class="muted">No members found.</p>`;
+    return;
+  }
+
+  listEl.innerHTML = groupMembers
+    .map((m) => {
+      const isMemberOwner = String(m.user_id) === ownerId;
+      const isMe = String(m.user_id) === String(currentUser?.id || "");
+      const badge = isMemberOwner ? `<span class="group-role-pill owner">Owner</span>` : "";
+      const removeBtn =
+        amIOwner && !isMe
+          ? `<button type="button" class="history-del-btn" onclick="removeGroupMember('${escapeHtml(m.user_id)}')">Remove</button>`
+          : "";
+      return `
+        <div class="group-member-row">
+          <div class="group-member-left">
+            ${renderMiniAvatarHtml(m.name, m.avatar_url)}
+            <div class="lb-name">${escapeHtml(m.name)}${isMe ? " (You)" : ""}${badge}</div>
+          </div>
+          ${removeBtn}
+        </div>
+      `;
+    })
+    .join("");
+}
+
+window.removeGroupMember = async function (targetUserId) {
+  if (!selectedGroupId || !targetUserId) return;
+  const member = groupMembers.find((m) => String(m.user_id) === String(targetUserId));
+  if (!confirm(`Remove "${member?.name || "this member"}" from the group?`)) return;
+
+  const { error } = await sb
+    .from("group_members")
+    .delete()
+    .eq("group_id", selectedGroupId)
+    .eq("user_id", targetUserId);
+
+  if (error) {
+    setStatus($("group-members-status"), error.message, "err");
+    return;
+  }
+  setStatus($("group-members-status"), "Member removed.", "ok");
+  await loadGroupDetails(selectedGroupId);
+};
+
+$("btn-send-group-invite")?.addEventListener("click", async () => {
+  if (!selectedGroupId) return;
+  const inp = $("group-invite-input");
+  const query = (inp?.value || "").trim();
+  if (!query) {
+    setStatus($("group-members-status"), "Enter a username or email.", "err");
+    return;
+  }
+
+  setStatus($("group-members-status"), "Looking up player...");
+  let targetId = null;
+
+  if (query.includes("@")) {
+    const { data: emailRes } = await sb.rpc("get_user_id_by_email", { email_in: query.toLowerCase() });
+    if (Array.isArray(emailRes) && emailRes.length > 0) {
+      targetId = emailRes[0].id;
+    }
+  }
+
+  if (!targetId) {
+    const { data: prof } = await sb
+      .from("profiles")
+      .select("id, nickname")
+      .ilike("nickname", query)
+      .limit(1);
+    if (Array.isArray(prof) && prof.length > 0) {
+      targetId = prof[0].id;
+    }
+  }
+
+  if (!targetId) {
+    setStatus($("group-members-status"), `No player found matching "${query}".`, "err");
+    return;
+  }
+
+  if (groupMembers.some((m) => String(m.user_id) === String(targetId))) {
+    setStatus($("group-members-status"), "This player is already in the group.", "err");
+    return;
+  }
+
+  // Send invitation via group_invitations
+  const { error: invErr } = await sb.from("group_invitations").upsert(
+    {
+      group_id: selectedGroupId,
+      inviter_id: currentUser.id,
+      invitee_id: targetId,
+      status: "pending",
+    },
+    { onConflict: "group_id,invitee_id" }
+  );
+
+  if (invErr) {
+    setStatus($("group-members-status"), invErr.message, "err");
+    return;
+  }
+
+  inp.value = "";
+  setStatus($("group-members-status"), "Invitation sent!", "ok");
+});
 // ---- PAGINA PROFILO ----
 async function loadProfile() {
   if (!currentUser) return;
