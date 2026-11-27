@@ -20,7 +20,7 @@ const DEFAULT_SCANNER_WS_URL = "wss://manastat-scanner-server.onrender.com/ws/sc
 const STORAGE_SETS_KEY = "manastat_scanner_selected_sets";
 
 // Badge versione sempre visibile sopra la barra di navigazione
-const APP_UI_VERSION = "v3.3";
+const APP_UI_VERSION = "v3.4";
 let connectedServerVersion = "";
 
 function renderVersionBadge() {
@@ -499,7 +499,9 @@ document.querySelectorAll(".nav-btn").forEach((btn) => {
     } else {
       document.body.classList.remove("scanner-mode");
       stopScannerSession();
-      if (targetTab === "tab-profile" && typeof loadProfile === "function") {
+      if (targetTab === "tab-my-collection" && typeof loadUserCollection === "function") {
+        await loadUserCollection();
+      } else if (targetTab === "tab-profile" && typeof loadProfile === "function") {
         await loadProfile();
       }
     }
@@ -4155,6 +4157,883 @@ $("btn-send-group-invite")?.addEventListener("click", async () => {
 
   inp.value = "";
   setStatus($("group-members-status"), "Invitation sent!", "ok");
+});
+
+// ---- MY COLLECTION PAGE (DESKTOP PARITY) ----
+let myCollectionItems = [];
+let colSelectedColors = new Set();
+let colViewMode = "list"; // "list" | "grid"
+let colActiveDetailId = null;
+
+// Add Card Modal state
+let colAddSearchResults = [];
+let colAddSearchTimer = null;
+let colAddPrints = [];
+let colAddSelectedPrint = null;
+
+function getCollectionUnitPrice(item) {
+  if (!item) return null;
+  const raw = item.foil
+    ? (item.price_eur_foil ?? item.price_eur)
+    : (item.price_eur ?? item.price_eur_foil);
+  if (raw === null || raw === undefined || raw === "") return null;
+  const num = Number(raw);
+  return Number.isNaN(num) ? null : num;
+}
+
+function parseCollectorNumSort(cn) {
+  const s = String(cn || "").trim();
+  const m = s.match(/^(\d+)/);
+  return [m ? parseInt(m[1], 10) : 999999, s.toLowerCase()];
+}
+
+function getRarityRank(rarity) {
+  const r = String(rarity || "").toLowerCase();
+  if (r === "mythic") return 0;
+  if (r === "rare") return 1;
+  if (r === "uncommon") return 2;
+  if (r === "common") return 3;
+  return 4;
+}
+
+async function loadUserCollection() {
+  if (!currentUser) return;
+  setStatus($("col-page-status"), "Loading collection...");
+
+  const { data, error } = await sb
+    .from("user_collection")
+    .select("*")
+    .eq("user_id", currentUser.id)
+    .order("set_name", { ascending: true })
+    .order("name", { ascending: true });
+
+  if (error) {
+    setStatus($("col-page-status"), error.message, "err");
+    return;
+  }
+
+  myCollectionItems = data || [];
+  setStatus($("col-page-status"), "");
+  populateCollectionSetFilter();
+  updateCollectionKpis();
+  renderCollectionList();
+}
+
+function populateCollectionSetFilter() {
+  const sel = $("col-filter-set");
+  if (!sel) return;
+  const prev = sel.value || "ALL";
+  const setMap = new Map();
+  for (const it of myCollectionItems) {
+    const code = String(it.set_code || "").toUpperCase();
+    if (!code) continue;
+    if (!setMap.has(code)) setMap.set(code, it.set_name || code);
+  }
+  const entries = Array.from(setMap.entries()).sort((a, b) => a[1].localeCompare(b[1], "en"));
+  sel.innerHTML =
+    `<option value="ALL">All Sets (${entries.length})</option>` +
+    entries.map(([code, name]) => `<option value="${escapeHtml(code)}">[${escapeHtml(code)}] ${escapeHtml(name)}</option>`).join("");
+  sel.value = setMap.has(prev) ? prev : "ALL";
+}
+
+function updateCollectionKpis() {
+  let totalCopies = 0;
+  let foilCopies = 0;
+  let totalVal = 0;
+  const sets = new Set();
+
+  for (const it of myCollectionItems) {
+    const qty = Math.max(1, Number(it.quantity || 1));
+    totalCopies += qty;
+    if (it.foil) foilCopies += qty;
+    if (it.set_code) sets.add(String(it.set_code).toUpperCase());
+    const p = getCollectionUnitPrice(it);
+    if (p !== null) totalVal += p * qty;
+  }
+
+  if ($("col-kpi-total")) $("col-kpi-total").textContent = String(totalCopies);
+  if ($("col-kpi-unique")) $("col-kpi-unique").textContent = `${myCollectionItems.length} unique`;
+  if ($("col-kpi-value")) $("col-kpi-value").textContent = `€ ${totalVal.toFixed(2)}`;
+  if ($("col-kpi-foil")) $("col-kpi-foil").textContent = `${foilCopies} foil`;
+  if ($("col-kpi-sets")) $("col-kpi-sets").textContent = String(sets.size);
+}
+
+function getFilteredCollectionItems() {
+  const q = ($("col-search-input")?.value || "").trim().toLowerCase();
+  const setFilter = $("col-filter-set")?.value || "ALL";
+  const rarityFilter = $("col-filter-rarity")?.value || "ALL";
+  const finishFilter = $("col-filter-finish")?.value || "ALL";
+
+  return myCollectionItems.filter((it) => {
+    if (q) {
+      const hay = `${it.name || ""} ${it.set_name || ""} ${it.set_code || ""} ${it.collector_number || ""} ${it.type_line || ""}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    if (setFilter !== "ALL" && String(it.set_code || "").toUpperCase() !== setFilter) return false;
+    if (rarityFilter !== "ALL" && String(it.rarity || "").toLowerCase() !== rarityFilter) return false;
+    if (finishFilter === "foil" && !it.foil) return false;
+    if (finishFilter === "nonfoil" && it.foil) return false;
+
+    if (colSelectedColors.size > 0) {
+      const cols = Array.isArray(it.colors) ? it.colors.map((c) => String(c).toUpperCase()) : [];
+      const isColorless = cols.length === 0;
+      let match = false;
+      for (const wanted of colSelectedColors) {
+        if (wanted === "C" && isColorless) match = true;
+        else if (cols.includes(wanted)) match = true;
+      }
+      if (!match) return false;
+    }
+    return true;
+  });
+}
+
+function sortCollectionSlice(list, sortMode) {
+  const arr = list.slice();
+  if (sortMode === "alpha") {
+    return arr.sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "en"));
+  }
+  if (sortMode === "price") {
+    return arr.sort((a, b) => {
+      const pa = (getCollectionUnitPrice(a) || 0) * Math.max(1, Number(a.quantity || 1));
+      const pb = (getCollectionUnitPrice(b) || 0) * Math.max(1, Number(b.quantity || 1));
+      if (pb !== pa) return pb - pa;
+      return String(a.name || "").localeCompare(String(b.name || ""), "en");
+    });
+  }
+  if (sortMode === "rarity") {
+    return arr.sort((a, b) => {
+      const ra = getRarityRank(a.rarity);
+      const rb = getRarityRank(b.rarity);
+      if (ra !== rb) return ra - rb;
+      return String(a.name || "").localeCompare(String(b.name || ""), "en");
+    });
+  }
+  if (sortMode === "qty") {
+    return arr.sort((a, b) => {
+      const qa = Number(a.quantity || 1);
+      const qb = Number(b.quantity || 1);
+      if (qb !== qa) return qb - qa;
+      return String(a.name || "").localeCompare(String(b.name || ""), "en");
+    });
+  }
+  // Default: collector number
+  return arr.sort((a, b) => {
+    const [na, sa] = parseCollectorNumSort(a.collector_number);
+    const [nb, sbStr] = parseCollectorNumSort(b.collector_number);
+    if (na !== nb) return na - nb;
+    if (sa !== sbStr) return sa.localeCompare(sbStr);
+    return String(a.name || "").localeCompare(String(b.name || ""), "en");
+  });
+}
+
+function renderCollectionList() {
+  const container = $("col-cards-container");
+  if (!container) return;
+
+  const filtered = getFilteredCollectionItems();
+  const shownCopies = filtered.reduce((s, it) => s + Math.max(1, Number(it.quantity || 1)), 0);
+  if ($("col-shown-count")) {
+    $("col-shown-count").textContent = `${shownCopies} cards (${filtered.length} entries)`;
+  }
+
+  if (!myCollectionItems.length) {
+    container.innerHTML = `<p class="muted">Your collection is empty. Tap + to add cards, Import a CSV, or use the Scanner tab.</p>`;
+    return;
+  }
+
+  if (!filtered.length) {
+    container.innerHTML = `<p class="muted">No cards match the current filters.</p>`;
+    return;
+  }
+
+  const sortMode = $("col-sort-select")?.value || "set";
+
+  // Group by Set when sorting by set, otherwise flat sorted list
+  const sections = [];
+  if (sortMode === "set") {
+    const bySet = new Map();
+    for (const it of filtered) {
+      const code = String(it.set_code || "OTHER").toUpperCase();
+      if (!bySet.has(code)) {
+        const sec = { code, name: it.set_name || code, items: [] };
+        bySet.set(code, sec);
+        sections.push(sec);
+      }
+      bySet.get(code).items.push(it);
+    }
+    sections.sort((a, b) => a.name.localeCompare(b.name, "en"));
+  } else {
+    sections.push({ code: "", name: "", items: filtered });
+  }
+
+  container.innerHTML = sections
+    .map((sec) => {
+      const sorted = sortCollectionSlice(sec.items, sortMode);
+      const secCopies = sorted.reduce((s, it) => s + Math.max(1, Number(it.quantity || 1)), 0);
+      const secVal = sorted.reduce((s, it) => {
+        const p = getCollectionUnitPrice(it);
+        return s + (p !== null ? p * Math.max(1, Number(it.quantity || 1)) : 0);
+      }, 0);
+
+      const headerHtml = sec.code
+        ? `
+            <div class="col-set-header">
+              <div class="col-set-left">
+                <span class="col-set-code">${escapeHtml(sec.code)}</span>
+                <span class="col-set-name">${escapeHtml(sec.name)}</span>
+              </div>
+              <span class="col-set-right">${secCopies} · € ${secVal.toFixed(2)}</span>
+            </div>
+          `
+        : "";
+
+      if (colViewMode === "grid") {
+        const tiles = sorted
+          .map((it) => {
+            const qty = Math.max(1, Number(it.quantity || 1));
+            const img = it.card_image_url || toNormalCardUrl(it.image_url || "");
+            const p = getCollectionUnitPrice(it);
+            const priceTxt = p !== null ? formatEur(p * qty) : "—";
+            return `
+              <div class="col-grid-tile ${it.foil ? "is-foil" : ""}">
+                <div class="col-grid-img-wrap" onclick="openCollectionCardDetail('${escapeHtml(it.id)}')">
+                  ${img ? `<img src="${escapeHtml(img)}" alt="${escapeHtml(it.name || "")}" loading="lazy" />` : `<div class="deck-stack-fallback">${escapeHtml(it.name || "")}</div>`}
+                  ${it.foil ? `<span class="col-foil-overlay-badge">FOIL</span>` : ""}
+                </div>
+                <div class="deck-search-tile-name">${escapeHtml(it.name || "")}</div>
+                <div class="col-grid-footer">
+                  <span class="card-price-inline" data-col-price-id="${escapeHtml(it.id)}">${priceTxt}</span>
+                  <div class="deck-qty-controls">
+                    <button type="button" class="deck-qty-btn" onclick="changeCollectionQty('${escapeHtml(it.id)}', -1)">−</button>
+                    <span class="deck-qty-num" data-col-qty-id="${escapeHtml(it.id)}">${qty}</span>
+                    <button type="button" class="deck-qty-btn" onclick="changeCollectionQty('${escapeHtml(it.id)}', 1)">+</button>
+                  </div>
+                </div>
+              </div>
+            `;
+          })
+          .join("");
+        return `${headerHtml}<div class="col-grid">${tiles}</div>`;
+      }
+
+      const rows = sorted
+        .map((it) => {
+          const qty = Math.max(1, Number(it.quantity || 1));
+          const p = getCollectionUnitPrice(it);
+          const priceTxt = p !== null ? formatEur(p * qty) : "";
+          const rarCls = String(it.rarity || "common").toLowerCase();
+          const setMeta = `${String(it.set_code || "").toUpperCase()}${it.collector_number ? ` #${it.collector_number}` : ""}`;
+          return `
+            <div class="deck-card-row">
+              <div class="deck-card-main" onclick="openCollectionCardDetail('${escapeHtml(it.id)}')">
+                <div class="deck-card-name-line">
+                  <span class="col-rarity-dot ${escapeHtml(rarCls)}"></span>
+                  <span class="deck-card-name">${escapeHtml(it.name || "")}</span>
+                  ${it.foil ? `<span class="col-foil-pill">FOIL</span>` : ""}
+                </div>
+                <div class="deck-card-subline">
+                  <span class="muted" style="font-size:11px;">${escapeHtml(setMeta)}</span>
+                  ${renderManaPipsHtml(it.mana_cost) ? `<div class="deck-card-mana">${renderManaPipsHtml(it.mana_cost)}</div>` : ""}
+                  ${priceTxt ? `<span class="card-price-inline" data-col-price-id="${escapeHtml(it.id)}">${priceTxt}</span>` : ""}
+                </div>
+              </div>
+              <div class="deck-qty-controls">
+                <button type="button" class="deck-qty-btn" onclick="changeCollectionQty('${escapeHtml(it.id)}', -1)">−</button>
+                <span class="deck-qty-num" data-col-qty-id="${escapeHtml(it.id)}">${qty}</span>
+                <button type="button" class="deck-qty-btn" onclick="changeCollectionQty('${escapeHtml(it.id)}', 1)">+</button>
+              </div>
+            </div>
+          `;
+        })
+        .join("");
+
+      return `${headerHtml}${rows}`;
+    })
+    .join("");
+}
+
+window.changeCollectionQty = async function (itemId, delta) {
+  const idx = myCollectionItems.findIndex((x) => String(x.id) === String(itemId));
+  if (idx === -1) return;
+  const item = myCollectionItems[idx];
+  const curQty = Math.max(1, Number(item.quantity || 1));
+  const newQty = curQty + delta;
+
+  if (newQty <= 0) {
+    if (!confirm(`Remove "${item.name}" from your collection?`)) return;
+    const { error } = await sb
+      .from("user_collection")
+      .delete()
+      .eq("id", item.id)
+      .eq("user_id", currentUser.id);
+    if (error) {
+      setStatus($("col-page-status"), error.message, "err");
+      return;
+    }
+    myCollectionItems.splice(idx, 1);
+    if (String(colActiveDetailId) === String(item.id)) {
+      $("col-detail-modal")?.classList.add("hidden");
+      colActiveDetailId = null;
+    }
+    populateCollectionSetFilter();
+    updateCollectionKpis();
+    renderCollectionList();
+    return;
+  }
+
+  // In-place update (zero flash)
+  item.quantity = newQty;
+  document.querySelectorAll(`[data-col-qty-id="${item.id}"]`).forEach((el) => {
+    el.textContent = String(newQty);
+  });
+  const unitP = getCollectionUnitPrice(item);
+  if (unitP !== null) {
+    document.querySelectorAll(`[data-col-price-id="${item.id}"]`).forEach((el) => {
+      el.textContent = formatEur(unitP * newQty);
+    });
+  }
+  if (String(colActiveDetailId) === String(item.id)) {
+    if ($("col-detail-qty")) $("col-detail-qty").textContent = String(newQty);
+    if ($("col-detail-price")) {
+      $("col-detail-price").textContent = unitP !== null ? `${formatEur(unitP)} · Tot ${formatEur(unitP * newQty)}` : "—";
+    }
+  }
+  updateCollectionKpis();
+
+  const { error } = await sb
+    .from("user_collection")
+    .update({ quantity: newQty, updated_at: new Date().toISOString() })
+    .eq("id", item.id)
+    .eq("user_id", currentUser.id);
+
+  if (error) {
+    item.quantity = curQty;
+    updateCollectionKpis();
+    renderCollectionList();
+    setStatus($("col-page-status"), error.message, "err");
+  }
+};
+
+// Filter & View event listeners
+$("col-search-input")?.addEventListener("input", renderCollectionList);
+$("col-filter-set")?.addEventListener("change", renderCollectionList);
+$("col-filter-rarity")?.addEventListener("change", renderCollectionList);
+$("col-filter-finish")?.addEventListener("change", renderCollectionList);
+$("col-sort-select")?.addEventListener("change", renderCollectionList);
+
+$("btn-col-toggle-filters")?.addEventListener("click", () => {
+  $("col-filters-panel")?.classList.toggle("hidden");
+});
+
+$("btn-col-reset-filters")?.addEventListener("click", () => {
+  if ($("col-search-input")) $("col-search-input").value = "";
+  if ($("col-filter-set")) $("col-filter-set").value = "ALL";
+  if ($("col-filter-rarity")) $("col-filter-rarity").value = "ALL";
+  if ($("col-filter-finish")) $("col-filter-finish").value = "ALL";
+  if ($("col-sort-select")) $("col-sort-select").value = "set";
+  colSelectedColors.clear();
+  document.querySelectorAll(".col-color-btn").forEach((b) => b.classList.remove("active"));
+  renderCollectionList();
+});
+
+document.querySelectorAll(".col-color-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const col = btn.dataset.colColor;
+    if (colSelectedColors.has(col)) {
+      colSelectedColors.delete(col);
+      btn.classList.remove("active");
+    } else {
+      colSelectedColors.add(col);
+      btn.classList.add("active");
+    }
+    renderCollectionList();
+  });
+});
+
+$("btn-col-view-list")?.addEventListener("click", () => {
+  colViewMode = "list";
+  $("btn-col-view-list").classList.add("active");
+  $("btn-col-view-grid").classList.remove("active");
+  renderCollectionList();
+});
+
+$("btn-col-view-grid")?.addEventListener("click", () => {
+  colViewMode = "grid";
+  $("btn-col-view-grid").classList.add("active");
+  $("btn-col-view-list").classList.remove("active");
+  renderCollectionList();
+});
+
+// ---- COLLECTION CARD DETAIL MODAL ----
+window.openCollectionCardDetail = function (itemId) {
+  const item = myCollectionItems.find((x) => String(x.id) === String(itemId));
+  if (!item) return;
+  colActiveDetailId = item.id;
+
+  const qty = Math.max(1, Number(item.quantity || 1));
+  const unitP = getCollectionUnitPrice(item);
+  const img = item.card_image_url || toNormalCardUrl(item.image_url || "");
+
+  $("col-detail-img").src = img || "";
+  $("col-detail-img-wrap")?.classList.toggle("is-foil", Boolean(item.foil));
+  $("col-detail-foil-badge")?.classList.toggle("hidden", !item.foil);
+  $("col-detail-name").textContent = item.name || "";
+  const rar = item.rarity ? item.rarity.charAt(0).toUpperCase() + item.rarity.slice(1) : "";
+  $("col-detail-meta").textContent = [
+    `[${String(item.set_code || "").toUpperCase()}] ${item.set_name || ""}`.trim(),
+    item.collector_number ? `#${item.collector_number}` : "",
+    rar,
+  ].filter(Boolean).join(" · ");
+
+  $("col-detail-qty").textContent = String(qty);
+  $("col-detail-price").textContent =
+    unitP !== null ? `${formatEur(unitP)} · Tot ${formatEur(unitP * qty)}` : "—";
+
+  $("col-detail-modal")?.classList.remove("hidden");
+};
+
+$("btn-col-detail-minus")?.addEventListener("click", () => {
+  if (colActiveDetailId) changeCollectionQty(colActiveDetailId, -1);
+});
+
+$("btn-col-detail-plus")?.addEventListener("click", () => {
+  if (colActiveDetailId) changeCollectionQty(colActiveDetailId, 1);
+});
+
+$("btn-col-detail-delete")?.addEventListener("click", async () => {
+  if (!colActiveDetailId) return;
+  const item = myCollectionItems.find((x) => String(x.id) === String(colActiveDetailId));
+  if (!item) return;
+  await changeCollectionQty(item.id, -Math.max(1, Number(item.quantity || 1)));
+});
+
+$("btn-col-detail-close")?.addEventListener("click", () => {
+  colActiveDetailId = null;
+  $("col-detail-modal")?.classList.add("hidden");
+});
+
+// ---- ADD CARD TO COLLECTION MODAL (SEARCH -> EDITION + FOIL + QTY) ----
+$("btn-open-col-add")?.addEventListener("click", () => {
+  colAddSearchResults = [];
+  colAddPrints = [];
+  colAddSelectedPrint = null;
+  if ($("col-add-search-input")) $("col-add-search-input").value = "";
+  if ($("col-add-results")) $("col-add-results").innerHTML = "";
+  $("col-add-results")?.classList.remove("hidden");
+  $("col-add-picker")?.classList.add("hidden");
+  setStatus($("col-add-status"), "");
+  $("col-add-modal")?.classList.remove("hidden");
+  setTimeout(() => $("col-add-search-input")?.focus(), 50);
+});
+
+$("btn-close-col-add")?.addEventListener("click", () => {
+  $("col-add-modal")?.classList.add("hidden");
+});
+
+$("btn-col-add-back")?.addEventListener("click", () => {
+  $("col-add-picker")?.classList.add("hidden");
+  $("col-add-results")?.classList.remove("hidden");
+  setStatus($("col-add-status"), "");
+});
+
+async function searchCollectionAddCards() {
+  const q = ($("col-add-search-input")?.value || "").trim();
+  const box = $("col-add-results");
+  if (q.length < 2) {
+    colAddSearchResults = [];
+    box.innerHTML = "";
+    setStatus($("col-add-status"), "");
+    return;
+  }
+  $("col-add-picker")?.classList.add("hidden");
+  box.classList.remove("hidden");
+  setStatus($("col-add-status"), "Searching Scryfall...");
+  try {
+    const resp = await fetch(
+      `https://api.scryfall.com/cards/search?q=${encodeURIComponent(q)}&unique=cards`
+    );
+    if (!resp.ok) {
+      colAddSearchResults = [];
+      box.innerHTML = "";
+      setStatus($("col-add-status"), "No cards found.");
+      return;
+    }
+    const json = await resp.json();
+    colAddSearchResults = (json.data || []).slice(0, 12);
+    setStatus($("col-add-status"), "");
+    box.innerHTML = colAddSearchResults
+      .map((c, i) => {
+        const img = c.image_uris?.normal || c.card_faces?.[0]?.image_uris?.normal || "";
+        const price = extractScryfallEurPrice(c, false);
+        return `
+          <div class="deck-search-tile">
+            ${img ? `<img class="deck-search-tile-img" src="${escapeHtml(img)}" alt="${escapeHtml(c.name || "")}" loading="lazy" />` : `<div class="deck-search-tile-img"></div>`}
+            <div class="deck-search-tile-name">${escapeHtml(c.name || "")}</div>
+            <div class="deck-search-tile-price">${formatEur(price)}</div>
+            <button type="button" class="deck-add-btn" onclick="openColAddEditionPicker(${i})">Select</button>
+          </div>
+        `;
+      })
+      .join("");
+  } catch {
+    setStatus($("col-add-status"), "Scryfall connection error.", "err");
+  }
+}
+
+$("btn-col-add-search")?.addEventListener("click", searchCollectionAddCards);
+$("col-add-search-input")?.addEventListener("input", () => {
+  clearTimeout(colAddSearchTimer);
+  colAddSearchTimer = setTimeout(searchCollectionAddCards, 350);
+});
+
+function updateColAddPickerPreview() {
+  const pr = colAddSelectedPrint;
+  if (!pr) return;
+  const isFoil = $("col-add-finish-select")?.value === "foil";
+  const img = pr.image_uris?.normal || pr.card_faces?.[0]?.image_uris?.normal || "";
+  const p = extractScryfallEurPrice(pr, isFoil);
+
+  $("col-add-preview-img").src = img;
+  $("col-add-card-name").textContent = pr.name || "";
+  $("col-add-card-price").textContent = formatEur(p);
+  $("col-add-foil-badge")?.classList.toggle("hidden", !isFoil);
+}
+
+window.openColAddEditionPicker = async function (idx) {
+  const sc = colAddSearchResults[idx];
+  if (!sc) return;
+
+  colAddPrints = [sc];
+  colAddSelectedPrint = sc;
+  $("col-add-results")?.classList.add("hidden");
+  $("col-add-picker")?.classList.remove("hidden");
+  if ($("col-add-finish-select")) $("col-add-finish-select").value = "nonfoil";
+  if ($("col-add-qty-input")) $("col-add-qty-input").value = "1";
+  updateColAddPickerPreview();
+
+  const edSel = $("col-add-edition-select");
+  edSel.innerHTML = `<option value="0">Loading all printings...</option>`;
+
+  try {
+    const cleanName = String(sc.name || "").split("//")[0].trim();
+    const resp = await fetch(
+      `https://api.scryfall.com/cards/search?q=${encodeURIComponent(`!"${cleanName}"`)}&unique=prints&order=released&dir=desc`
+    );
+    if (resp.ok) {
+      const json = await resp.json();
+      if (Array.isArray(json.data) && json.data.length > 0) {
+        colAddPrints = json.data;
+        colAddSelectedPrint = colAddPrints[0];
+        edSel.innerHTML = colAddPrints
+          .map((p, i) => {
+            const scode = String(p.set || "").toUpperCase();
+            const cn = p.collector_number ? `#${p.collector_number}` : "";
+            const prEur = extractScryfallEurPrice(p, false);
+            const prTxt = prEur !== null ? ` · €${prEur.toFixed(2)}` : "";
+            return `<option value="${i}">[${escapeHtml(scode)}] ${escapeHtml(p.set_name || scode)} ${escapeHtml(cn)}${prTxt}</option>`;
+          })
+          .join("");
+        edSel.value = "0";
+        updateColAddPickerPreview();
+      }
+    }
+  } catch {
+    // keep default print
+  }
+};
+
+$("col-add-edition-select")?.addEventListener("change", (e) => {
+  const i = parseInt(e.target.value, 10);
+  if (!Number.isNaN(i) && colAddPrints[i]) {
+    colAddSelectedPrint = colAddPrints[i];
+    updateColAddPickerPreview();
+  }
+});
+
+$("col-add-finish-select")?.addEventListener("change", updateColAddPickerPreview);
+
+function buildCollectionRowFromScryfall(sc, isFoil, qty) {
+  const normalUrl = sc.image_uris?.normal || sc.card_faces?.[0]?.image_uris?.normal || "";
+  const artUrl = sc.image_uris?.art_crop || sc.card_faces?.[0]?.image_uris?.art_crop || normalUrl;
+  return {
+    user_id: currentUser.id,
+    scryfall_id: sc.id || "",
+    name: sc.name || "",
+    set_code: String(sc.set || "").toUpperCase(),
+    set_name: sc.set_name || "",
+    collector_number: String(sc.collector_number || ""),
+    released_at: sc.released_at || "",
+    rarity: String(sc.rarity || "").toLowerCase(),
+    type_line: sc.type_line || "",
+    mana_cost: extractManaCostFromScryfall(sc),
+    cmc: Number(sc.cmc || 0),
+    colors: Array.isArray(sc.colors) ? sc.colors : (Array.isArray(sc.color_identity) ? sc.color_identity : []),
+    image_url: artUrl,
+    card_image_url: normalUrl,
+    price_eur: extractScryfallEurPrice(sc, false),
+    price_eur_foil: extractScryfallEurPrice(sc, true),
+    foil: Boolean(isFoil),
+    quantity: Math.max(1, Number(qty || 1)),
+  };
+}
+
+$("btn-col-add-confirm")?.addEventListener("click", async () => {
+  if (!colAddSelectedPrint || !currentUser) return;
+  const isFoil = $("col-add-finish-select")?.value === "foil";
+  const qty = Math.max(1, parseInt($("col-add-qty-input")?.value || "1", 10));
+  const row = buildCollectionRowFromScryfall(colAddSelectedPrint, isFoil, qty);
+
+  setStatus($("col-add-status"), `Adding ${row.name}...`);
+
+  const { data: existing, error: selErr } = await sb
+    .from("user_collection")
+    .select("id, quantity")
+    .eq("user_id", currentUser.id)
+    .eq("scryfall_id", row.scryfall_id)
+    .eq("foil", row.foil)
+    .maybeSingle();
+
+  if (selErr) {
+    setStatus($("col-add-status"), selErr.message, "err");
+    return;
+  }
+
+  let saveErr = null;
+  if (existing) {
+    const { error } = await sb
+      .from("user_collection")
+      .update({
+        quantity: (existing.quantity || 0) + qty,
+        price_eur: row.price_eur,
+        price_eur_foil: row.price_eur_foil,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", existing.id);
+    saveErr = error;
+  } else {
+    const { error } = await sb.from("user_collection").insert(row);
+    saveErr = error;
+  }
+
+  if (saveErr) {
+    setStatus($("col-add-status"), saveErr.message, "err");
+    return;
+  }
+
+  $("col-add-modal")?.classList.add("hidden");
+  await loadUserCollection();
+  setStatus($("col-page-status"), `Added ${qty}x ${row.name} [${row.set_code}]!`, "ok");
+});
+
+// ---- IMPORT COLLECTION (CSV FROM MANABOX/MOXFIELD OR TEXT) ----
+function parseCsvLine(line) {
+  const out = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        cur += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (ch === "," && !inQuotes) {
+      out.push(cur.trim());
+      cur = "";
+    } else {
+      cur += ch;
+    }
+  }
+  out.push(cur.trim());
+  return out;
+}
+
+function parseCollectionCsvOrText(rawText) {
+  const text = String(rawText || "").trim();
+  if (!text) return [];
+  const lines = text.split(/\r?\n/).filter((l) => l.trim());
+  if (!lines.length) return [];
+
+  // Detect CSV header (ManaBox / Moxfield)
+  const firstCols = parseCsvLine(lines[0]).map((h) => h.toLowerCase().replace(/^"|"$/g, ""));
+  const hasNameCol = firstCols.includes("name") || firstCols.includes("card name");
+  if (firstCols.length >= 3 && hasNameCol) {
+    const idxName = firstCols.findIndex((h) => h === "name" || h === "card name");
+    const idxQty = firstCols.findIndex((h) => h === "quantity" || h === "count" || h === "tradelist count");
+    const idxSet = firstCols.findIndex((h) => h === "set code" || h === "edition" || h === "set");
+    const idxNum = firstCols.findIndex((h) => h === "collector number" || h === "card number" || h === "number");
+    const idxFoil = firstCols.findIndex((h) => h === "foil" || h === "finish");
+    const idxScryfall = firstCols.findIndex((h) => h === "scryfall id");
+
+    const parsed = [];
+    for (let i = 1; i < lines.length; i++) {
+      const cols = parseCsvLine(lines[i]);
+      const name = (cols[idxName] || "").trim();
+      if (!name) continue;
+      const qty = Math.max(1, parseInt(cols[idxQty] || "1", 10) || 1);
+      const setCode = idxSet >= 0 ? String(cols[idxSet] || "").trim().toLowerCase() : "";
+      const collectorNumber = idxNum >= 0 ? String(cols[idxNum] || "").trim() : "";
+      const foilRaw = idxFoil >= 0 ? String(cols[idxFoil] || "").trim().toLowerCase() : "";
+      const isFoil = foilRaw === "foil" || foilRaw === "etched" || foilRaw === "true" || foilRaw === "1" || foilRaw === "yes";
+      const scryfallId = idxScryfall >= 0 ? String(cols[idxScryfall] || "").trim() : "";
+      parsed.push({ qty, name, setCode, collectorNumber, isFoil, scryfallId });
+    }
+    return parsed;
+  }
+
+  // Fallback to decklist text parser
+  return parseDecklistText(text).map((it) => ({
+    qty: it.qty,
+    name: it.name,
+    setCode: it.setCode,
+    collectorNumber: it.collectorNumber,
+    isFoil: it.isFoil,
+    scryfallId: "",
+  }));
+}
+
+$("btn-open-col-import")?.addEventListener("click", () => {
+  if ($("col-import-file")) $("col-import-file").value = "";
+  if ($("col-import-textarea")) $("col-import-textarea").value = "";
+  setStatus($("col-import-status"), "");
+  $("col-import-modal")?.classList.remove("hidden");
+});
+
+$("btn-cancel-col-import")?.addEventListener("click", () => {
+  $("col-import-modal")?.classList.add("hidden");
+});
+
+$("col-import-file")?.addEventListener("change", (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    if ($("col-import-textarea")) $("col-import-textarea").value = String(reader.result || "");
+    setStatus($("col-import-status"), `Loaded "${file.name}". Tap Import to continue.`, "ok");
+  };
+  reader.readAsText(file);
+});
+
+$("btn-run-col-import")?.addEventListener("click", async () => {
+  const raw = ($("col-import-textarea")?.value || "").trim();
+  const items = parseCollectionCsvOrText(raw);
+  if (!items.length) {
+    setStatus($("col-import-status"), "Upload a CSV or paste at least one card.", "err");
+    return;
+  }
+
+  const btn = $("btn-run-col-import");
+  if (btn) btn.disabled = true;
+
+  try {
+    setStatus($("col-import-status"), `Looking up ${items.length} cards on Scryfall...`);
+
+    const byId = new Map();
+    const bySetNum = new Map();
+    const byName = new Map();
+
+    for (let i = 0; i < items.length; i += 75) {
+      const chunk = items.slice(i, i + 75);
+      const identifiers = chunk
+        .map((it) => {
+          if (it.scryfallId && /^[0-9a-f-]{36}$/i.test(it.scryfallId)) return { id: it.scryfallId };
+          if (it.setCode && it.collectorNumber) return { set: it.setCode, collector_number: it.collectorNumber };
+          const front = it.name.split("//")[0].trim();
+          return front ? { name: front } : null;
+        })
+        .filter(Boolean);
+
+      if (!identifiers.length) continue;
+      const resp = await fetch("https://api.scryfall.com/cards/collection", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ identifiers }),
+      });
+      if (!resp.ok) continue;
+      const json = await resp.json();
+      for (const sc of json.data || []) {
+        if (sc.id) byId.set(String(sc.id), sc);
+        if (sc.set && sc.collector_number) {
+          bySetNum.set(`${String(sc.set).toLowerCase()}|${String(sc.collector_number).toLowerCase()}`, sc);
+        }
+        if (sc.name) {
+          byName.set(sc.name.toLowerCase(), sc);
+          byName.set(sc.name.split("//")[0].trim().toLowerCase(), sc);
+        }
+      }
+    }
+
+    // Merge imported rows by (scryfall_id, foil)
+    const merged = new Map();
+    const notFound = [];
+
+    for (const it of items) {
+      const frontLower = it.name.split("//")[0].trim().toLowerCase();
+      const sc =
+        (it.scryfallId && byId.get(it.scryfallId)) ||
+        (it.setCode && it.collectorNumber && bySetNum.get(`${it.setCode}|${it.collectorNumber.toLowerCase()}`)) ||
+        byName.get(it.name.toLowerCase()) ||
+        byName.get(frontLower);
+
+      if (!sc) {
+        notFound.push(it.name);
+        continue;
+      }
+
+      const key = `${sc.id}|${it.isFoil ? 1 : 0}`;
+      if (merged.has(key)) {
+        merged.get(key).quantity += it.qty;
+      } else {
+        merged.set(key, buildCollectionRowFromScryfall(sc, it.isFoil, it.qty));
+      }
+    }
+
+    if (!merged.size) {
+      setStatus($("col-import-status"), "No cards matched on Scryfall.", "err");
+      return;
+    }
+
+    setStatus($("col-import-status"), `Saving ${merged.size} entries to Supabase...`);
+
+    // Sum with existing collection quantities
+    const existingMap = new Map(
+      myCollectionItems.map((r) => [`${r.scryfall_id}|${r.foil ? 1 : 0}`, Number(r.quantity || 0)])
+    );
+
+    const payload = Array.from(merged.entries()).map(([key, row]) => ({
+      ...row,
+      quantity: row.quantity + (existingMap.get(key) || 0),
+      updated_at: new Date().toISOString(),
+    }));
+
+    for (let i = 0; i < payload.length; i += 200) {
+      const chunk = payload.slice(i, i + 200);
+      const { error } = await sb
+        .from("user_collection")
+        .upsert(chunk, { onConflict: "user_id,scryfall_id,foil" });
+      if (error) throw error;
+    }
+
+    await loadUserCollection();
+
+    if (notFound.length > 0) {
+      setStatus(
+        $("col-import-status"),
+        `Imported ${merged.size} entries. Not found (${notFound.length}): ${notFound.slice(0, 5).join(", ")}${notFound.length > 5 ? "…" : ""}`,
+        "err"
+      );
+    } else {
+      $("col-import-modal")?.classList.add("hidden");
+      setStatus($("col-page-status"), `Imported ${merged.size} entries into your collection!`, "ok");
+    }
+  } catch (err) {
+    setStatus($("col-import-status"), `Import error: ${err.message || err}`, "err");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 });
 // ---- PAGINA PROFILO ----
 async function loadProfile() {
