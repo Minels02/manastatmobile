@@ -633,8 +633,10 @@ async function resolveDeckArtwork(deck) {
   return "";
 }
 
-// ---- CREAZIONE NUOVO MAZZO DA MOBILE ----
+// ---- CREATE NEW DECK (COMMANDER + PARTNER) ----
 let newDeckSelectedCmd = null;
+let newDeckSelectedPartner = null;
+let newDeckActiveCmdSlot = 1; // 1 = Commander, 2 = Partner
 let newDeckCmdResults = [];
 let newDeckCmdTimer = null;
 
@@ -643,37 +645,83 @@ function toggleNewDeckCmdVisibility() {
   $("new-deck-cmd-section")?.classList.toggle("hidden", !isCommanderFormat(fmt));
 }
 
-function renderNewDeckSelectedCmd() {
-  const pill = $("new-deck-cmd-selected");
-  if (!pill) return;
-  if (!newDeckSelectedCmd) {
-    pill.classList.add("hidden");
-    pill.innerHTML = "";
-    return;
-  }
-  pill.classList.remove("hidden");
-  pill.innerHTML = `
-    <span>👑 ${escapeHtml(newDeckSelectedCmd.name)}</span>
-    <button type="button" class="btn small" onclick="clearNewDeckCmd()" style="width:auto;margin:0;padding:3px 7px;">×</button>
+function renderNewDeckCmdSlots() {
+  const wrap = $("new-deck-cmd-slots");
+  if (!wrap) return;
+
+  const slot1Name = newDeckSelectedCmd?.name || "";
+  const slot2Name = newDeckSelectedPartner?.name || "";
+
+  wrap.innerHTML = `
+    <div class="cmd-slot-card ${newDeckActiveCmdSlot === 1 ? "active" : ""}" onclick="selectNewDeckCmdSlot(1)">
+      <div class="cmd-slot-top">
+        <span class="cmd-slot-label">Commander</span>
+        ${slot1Name ? `<button type="button" class="cmd-slot-clear" onclick="event.stopPropagation(); clearNewDeckCmdSlot(1)">×</button>` : ""}
+      </div>
+      <div class="cmd-slot-value ${slot1Name ? "" : "empty"}">${slot1Name ? `👑 ${escapeHtml(slot1Name)}` : "Tap to pick..."}</div>
+    </div>
+    <div class="cmd-slot-card ${newDeckActiveCmdSlot === 2 ? "active" : ""}" onclick="selectNewDeckCmdSlot(2)">
+      <div class="cmd-slot-top">
+        <span class="cmd-slot-label">Partner (opt.)</span>
+        ${slot2Name ? `<button type="button" class="cmd-slot-clear" onclick="event.stopPropagation(); clearNewDeckCmdSlot(2)">×</button>` : ""}
+      </div>
+      <div class="cmd-slot-value ${slot2Name ? "" : "empty"}">${slot2Name ? `👑 ${escapeHtml(slot2Name)}` : "+ Add Partner"}</div>
+    </div>
   `;
+
+  const inp = $("new-deck-cmd-input");
+  if (inp) {
+    inp.placeholder = newDeckActiveCmdSlot === 1 ? "Search Commander..." : "Search Partner / Background...";
+  }
 }
 
-window.clearNewDeckCmd = function () {
-  newDeckSelectedCmd = null;
-  renderNewDeckSelectedCmd();
+window.selectNewDeckCmdSlot = function (slot) {
+  newDeckActiveCmdSlot = slot === 2 ? 2 : 1;
+  renderNewDeckCmdSlots();
+  $("new-deck-cmd-input")?.focus();
+};
+
+window.clearNewDeckCmdSlot = function (slot) {
+  if (slot === 1) {
+    newDeckSelectedCmd = newDeckSelectedPartner;
+    newDeckSelectedPartner = null;
+    newDeckActiveCmdSlot = 1;
+  } else {
+    newDeckSelectedPartner = null;
+    newDeckActiveCmdSlot = 2;
+  }
+  renderNewDeckCmdSlots();
 };
 
 window.pickNewDeckCmd = function (idx) {
   const sc = newDeckCmdResults[idx];
   if (!sc) return;
-  newDeckSelectedCmd = sc;
+
+  const pickedName = String(sc.name || "").toLowerCase();
+  if (newDeckActiveCmdSlot === 1) {
+    if (newDeckSelectedPartner && String(newDeckSelectedPartner.name || "").toLowerCase() === pickedName) {
+      newDeckSelectedPartner = null;
+    }
+    newDeckSelectedCmd = sc;
+    if (!($("new-deck-name")?.value || "").trim()) {
+      $("new-deck-name").value = sc.name || "";
+    }
+  } else {
+    if (newDeckSelectedCmd && String(newDeckSelectedCmd.name || "").toLowerCase() === pickedName) {
+      setStatus($("new-deck-cmd-status"), "Partner must be a different card.", "err");
+      return;
+    }
+    if (!newDeckSelectedCmd) {
+      newDeckSelectedCmd = sc;
+    } else {
+      newDeckSelectedPartner = sc;
+    }
+  }
+
   $("new-deck-cmd-results").innerHTML = "";
   setStatus($("new-deck-cmd-status"), "");
-  $("new-deck-cmd-input").value = sc.name || "";
-  if (!($("new-deck-name")?.value || "").trim()) {
-    $("new-deck-name").value = sc.name || "";
-  }
-  renderNewDeckSelectedCmd();
+  if ($("new-deck-cmd-input")) $("new-deck-cmd-input").value = "";
+  renderNewDeckCmdSlots();
 };
 
 async function searchNewDeckCommander() {
@@ -685,7 +733,7 @@ async function searchNewDeckCommander() {
     setStatus($("new-deck-cmd-status"), "");
     return;
   }
-  setStatus($("new-deck-cmd-status"), "Ricerca su Scryfall...");
+  setStatus($("new-deck-cmd-status"), "Searching Scryfall...");
   try {
     const resp = await fetch(
       `https://api.scryfall.com/cards/search?q=${encodeURIComponent(`${q} is:commander`)}&unique=cards`
@@ -698,10 +746,11 @@ async function searchNewDeckCommander() {
     newDeckCmdResults = (json.data || []).slice(0, 12);
     if (!newDeckCmdResults.length) {
       box.innerHTML = "";
-      setStatus($("new-deck-cmd-status"), "Nessuna carta trovata.");
+      setStatus($("new-deck-cmd-status"), "No cards found.");
       return;
     }
     setStatus($("new-deck-cmd-status"), "");
+    const btnLabel = newDeckActiveCmdSlot === 2 ? "Set Partner" : "Select";
     box.innerHTML = newDeckCmdResults
       .map((c, i) => {
         const img = c.image_uris?.normal || c.card_faces?.[0]?.image_uris?.normal || "";
@@ -711,18 +760,20 @@ async function searchNewDeckCommander() {
             ${img ? `<img class="deck-search-tile-img" src="${escapeHtml(img)}" alt="${escapeHtml(c.name || "")}" loading="lazy" />` : `<div class="deck-search-tile-img"></div>`}
             <div class="deck-search-tile-name">${escapeHtml(c.name || "")}</div>
             <div class="deck-search-tile-price">${formatEur(price)}</div>
-            <button type="button" class="deck-add-btn" onclick="pickNewDeckCmd(${i})">Scegli</button>
+            <button type="button" class="deck-add-btn" onclick="pickNewDeckCmd(${i})">${btnLabel}</button>
           </div>
         `;
       })
       .join("");
   } catch {
-    setStatus($("new-deck-cmd-status"), "Errore di connessione a Scryfall.", "err");
+    setStatus($("new-deck-cmd-status"), "Scryfall connection error.", "err");
   }
 }
 
 $("btn-open-new-deck")?.addEventListener("click", () => {
   newDeckSelectedCmd = null;
+  newDeckSelectedPartner = null;
+  newDeckActiveCmdSlot = 1;
   newDeckCmdResults = [];
   if ($("new-deck-name")) $("new-deck-name").value = "";
   if ($("new-deck-format")) $("new-deck-format").value = "Commander";
@@ -730,7 +781,7 @@ $("btn-open-new-deck")?.addEventListener("click", () => {
   if ($("new-deck-cmd-results")) $("new-deck-cmd-results").innerHTML = "";
   setStatus($("new-deck-cmd-status"), "");
   setStatus($("new-deck-status"), "");
-  renderNewDeckSelectedCmd();
+  renderNewDeckCmdSlots();
   toggleNewDeckCmdVisibility();
   $("new-deck-modal")?.classList.remove("hidden");
 });
@@ -744,15 +795,16 @@ $("new-deck-cmd-input")?.addEventListener("input", () => {
 $("btn-cancel-new-deck")?.addEventListener("click", () => {
   $("new-deck-modal")?.classList.add("hidden");
 });
+
 $("btn-create-new-deck")?.addEventListener("click", async () => {
   const name = ($("new-deck-name")?.value || "").trim();
   const fmt = $("new-deck-format")?.value || "Commander";
   if (!name) {
-    setStatus($("new-deck-status"), "Inserisci un nome per il mazzo.", "err");
+    setStatus($("new-deck-status"), "Please enter a deck name.", "err");
     return;
   }
 
-  setStatus($("new-deck-status"), "Creazione mazzo...");
+  setStatus($("new-deck-status"), "Creating deck...");
   const insertPayload = {
     owner_id: currentUser.id,
     name,
@@ -760,10 +812,8 @@ $("btn-create-new-deck")?.addEventListener("click", async () => {
     format: fmt,
   };
 
-  let createdDeck = null;
   let { data, error } = await sb.from("decks").insert(insertPayload).select("*").single();
   if (error) {
-    // Fallback se la colonna format non esiste o ha vincoli
     const fb = await sb
       .from("decks")
       .insert({ owner_id: currentUser.id, name, type: fmt })
@@ -774,43 +824,46 @@ $("btn-create-new-deck")?.addEventListener("click", async () => {
   }
 
   if (error || !data) {
-    setStatus($("new-deck-status"), error?.message || "Errore nella creazione.", "err");
+    setStatus($("new-deck-status"), error?.message || "Failed to create deck.", "err");
     return;
   }
 
-  createdDeck = data;
+  const createdDeck = data;
+  const chosenCommanders = [newDeckSelectedCmd, newDeckSelectedPartner].filter(Boolean);
 
-  // Se è stato selezionato un comandante, salvalo subito in deck_cards e cards_json
-  if (newDeckSelectedCmd && isCommanderFormat(fmt)) {
-    const sc = newDeckSelectedCmd;
-    const normalUrl = sc.image_uris?.normal || sc.card_faces?.[0]?.image_uris?.normal || "";
-    const artUrl = sc.image_uris?.art_crop || sc.card_faces?.[0]?.image_uris?.art_crop || normalUrl;
-    const manaCost = extractManaCostFromScryfall(sc);
-    const oracleText = extractOracleTextFromScryfall(sc);
-    const colorIdentity = resolveCardColorIdentity({
-      color_identity: sc.color_identity,
-      colors: sc.colors,
-      mana_cost: manaCost,
-      oracle_text: oracleText,
-    });
-    const priceEur = extractScryfallEurPrice(sc, false);
-    const setLower = String(sc.set || "").trim().toLowerCase();
+  if (chosenCommanders.length > 0 && isCommanderFormat(fmt)) {
+    const dbRows = [];
+    const cardsJson = [];
+    let heroArtUrl = "";
 
-    const cmdRow = {
-      deck_id: createdDeck.id,
-      scryfall_id: sc.id || "",
-      name: sc.name || "",
-      type_line: sc.type_line || "",
-      oracle_text: oracleText,
-      mana_cost: manaCost,
-      image_url: normalUrl,
-      quantity: 1,
-      is_commander: true,
-    };
-    await sb.from("deck_cards").insert(cmdRow);
+    for (const sc of chosenCommanders) {
+      const normalUrl = sc.image_uris?.normal || sc.card_faces?.[0]?.image_uris?.normal || "";
+      const artUrl = sc.image_uris?.art_crop || sc.card_faces?.[0]?.image_uris?.art_crop || normalUrl;
+      if (!heroArtUrl && artUrl) heroArtUrl = artUrl;
+      const manaCost = extractManaCostFromScryfall(sc);
+      const oracleText = extractOracleTextFromScryfall(sc);
+      const colorIdentity = resolveCardColorIdentity({
+        color_identity: sc.color_identity,
+        colors: sc.colors,
+        mana_cost: manaCost,
+        oracle_text: oracleText,
+      });
+      const priceEur = extractScryfallEurPrice(sc, false);
+      const setLower = String(sc.set || "").trim().toLowerCase();
 
-    const cardsJson = [
-      {
+      dbRows.push({
+        deck_id: createdDeck.id,
+        scryfall_id: sc.id || "",
+        name: sc.name || "",
+        type_line: sc.type_line || "",
+        oracle_text: oracleText,
+        mana_cost: manaCost,
+        image_url: normalUrl,
+        quantity: 1,
+        is_commander: true,
+      });
+
+      cardsJson.push({
         scryfall_id: sc.id || "",
         name: sc.name || "",
         type_line: sc.type_line || "",
@@ -829,27 +882,28 @@ $("btn-create-new-deck")?.addEventListener("click", async () => {
         is_commander: true,
         is_proxy: false,
         tags: [],
-      },
-    ];
+      });
+    }
+
+    await sb.from("deck_cards").insert(dbRows);
 
     const { error: updErr } = await sb
       .from("decks")
-      .update({ cards_json: cardsJson, bg_image_url: artUrl })
+      .update({ cards_json: cardsJson, bg_image_url: heroArtUrl })
       .eq("id", createdDeck.id);
     if (updErr) {
       await sb.from("decks").update({ cards_json: cardsJson }).eq("id", createdDeck.id);
     }
   }
 
-
   $("new-deck-modal")?.classList.add("hidden");
   await loadDecks();
   openDeckDetail(createdDeck.id);
 });
 
-// ---- PAGINA MAZZI ----
+// ---- DECKS PAGE ----
 async function loadDecks() {
-  setStatus($("deck-list-status"), "Caricamento mazzi...");
+  setStatus($("deck-list-status"), "Loading decks...");
   const { data, error } = await sb
     .from("decks")
     .select("*")
@@ -865,7 +919,7 @@ async function loadDecks() {
     const kb = formatSortKey(b);
     if (ka[0] !== kb[0]) return ka[0] - kb[0];
     if (ka[1] !== kb[1]) return ka[1] - kb[1];
-    return ka[2].localeCompare(kb[2], "it");
+    return ka[2].localeCompare(kb[2], "en");
   });
 
   setStatus($("deck-list-status"), "");
@@ -892,7 +946,7 @@ async function loadDecks() {
 let decksFormatFilter = "ALL";
 
 function getDeckFormatLabel(deck) {
-  return String(deck.format || deck.type || "Altro").trim() || "Altro";
+  return String(deck.format || deck.type || "Other").trim() || "Other";
 }
 
 function renderDecksFormatFilter() {
@@ -924,7 +978,7 @@ function renderDecksFormatFilter() {
   const pills = ["ALL", ...formatsPresent];
   bar.innerHTML = pills
     .map((fmt) => {
-      const label = fmt === "ALL" ? "Tutti" : fmt;
+      const label = fmt === "ALL" ? "All" : fmt;
       const active = decksFormatFilter === fmt ? "active" : "";
       return `<button type="button" class="format-pill ${active}" onclick="setDecksFormatFilter('${escapeHtml(fmt)}')">${escapeHtml(label)}</button>`;
     })
@@ -940,7 +994,7 @@ function renderDecksList() {
   renderDecksFormatFilter();
   const container = $("decks-list-container");
   if (!myDecks.length) {
-    container.innerHTML = `<p class="muted">Nessun mazzo trovato sul tuo account. Tocca + in alto per crearne uno.</p>`;
+    container.innerHTML = `<p class="muted">No decks found on your account. Tap + at the top right to create one.</p>`;
     return;
   }
 
@@ -950,11 +1004,10 @@ function renderDecksList() {
       : myDecks.filter((d) => getDeckFormatLabel(d) === decksFormatFilter);
 
   if (!visible.length) {
-    container.innerHTML = `<p class="muted">Nessun mazzo in questo formato.</p>`;
+    container.innerHTML = `<p class="muted">No decks in this format.</p>`;
     return;
   }
 
-  // Raggruppa per formato per inserire le linee di separazione
   const groups = [];
   const byFmt = new Map();
   for (const d of visible) {
@@ -990,7 +1043,7 @@ function renderDecksList() {
             <button type="button" class="deck-banner-card" data-deck-card-id="${escapeHtml(d.id)}" ${bgStyle} onclick="openDeckDetail('${escapeHtml(d.id)}')">
               <div class="deck-banner-content">
                 <div>
-                  <div class="deck-banner-title">${escapeHtml(d.name || "Senza nome")}</div>
+                  <div class="deck-banner-title">${escapeHtml(d.name || "Untitled")}</div>
                   <div class="deck-banner-sub">${escapeHtml(fmtText)}</div>
                 </div>
                 <div class="deck-banner-arrow">›</div>
@@ -1021,7 +1074,6 @@ let deckGroupMode = "type"; // "type" | "tag"
 let deckViewMode = "list";  // "list" | "grid"
 let deckSortMode = "alpha"; // "alpha" | "cmc" | "price"
 
-// Switch sotto-tab della scheda mazzo
 document.querySelectorAll(".deck-subtab-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
     const targetId = btn.dataset.subtab;
@@ -1083,8 +1135,8 @@ window.openDeckDetail = async function (deckId) {
   currentDeckChangelog = Array.isArray(deck.changelog_json)
     ? deck.changelog_json.map((e) => ({ ...e }))
     : [];
-  const fmt = deck.format || deck.type || "Mazzo";
-  $("deck-detail-title").textContent = deck.name || "Senza nome";
+  const fmt = deck.format || deck.type || "Deck";
+  $("deck-detail-title").textContent = deck.name || "Untitled";
   $("deck-detail-format").textContent = fmt;
   $("deck-detail-count").textContent = "";
   $("deck-detail-price")?.classList.add("hidden");
@@ -1112,12 +1164,11 @@ $("btn-back-to-decks")?.addEventListener("click", () => {
   $("decks-list-view").classList.remove("hidden");
 });
 
-// Eliminazione mazzo da mobile
 $("btn-delete-deck")?.addEventListener("click", async () => {
   if (!selectedDeckId) return;
   const deck = myDecks.find((d) => String(d.id) === String(selectedDeckId));
-  const dName = deck?.name || "questo mazzo";
-  if (!confirm(`Eliminare definitivamente "${dName}"? Verranno rimosse anche lista carte e storico partite.`)) {
+  const dName = deck?.name || "this deck";
+  if (!confirm(`Permanently delete "${dName}"? All cards and match history will be removed.`)) {
     return;
   }
 
@@ -1127,7 +1178,7 @@ $("btn-delete-deck")?.addEventListener("click", async () => {
   const { error } = await sb.from("decks").delete().eq("id", targetId);
 
   if (error) {
-    alert(`Errore eliminazione mazzo: ${error.message}`);
+    alert(`Failed to delete deck: ${error.message}`);
     return;
   }
 
@@ -1139,7 +1190,8 @@ $("btn-delete-deck")?.addEventListener("click", async () => {
   $("decks-list-view").classList.remove("hidden");
   await loadDecks();
 });
-// ---- STATISTICHE & STORICO (deck_history) ----
+
+// ---- STATS & MATCH HISTORY (deck_history) ----
 async function loadDeckHistory(deckId) {
   const { data, error } = await sb
     .from("deck_history")
@@ -1177,7 +1229,7 @@ function renderWinLossPie(wins, losses) {
   const box = $("deck-pie-container");
   const total = wins + losses;
   if (!total) {
-    box.innerHTML = `<p class="muted">Nessuna partita registrata.</p>`;
+    box.innerHTML = `<p class="muted">No matches logged yet.</p>`;
     return;
   }
 
@@ -1198,9 +1250,9 @@ function renderWinLossPie(wins, losses) {
         </text>
       </svg>
       <div class="pie-legend">
-        <div><span class="legend-dot" style="background:#22c55e"></span>Vittorie: <strong>${wins}</strong></div>
-        <div><span class="legend-dot" style="background:#ef4444"></span>Sconfitte: <strong>${losses}</strong></div>
-        <div class="muted" style="font-size:12px;">Partite totali: <strong>${total}</strong></div>
+        <div><span class="legend-dot" style="background:#22c55e"></span>Wins: <strong>${wins}</strong></div>
+        <div><span class="legend-dot" style="background:#ef4444"></span>Losses: <strong>${losses}</strong></div>
+        <div class="muted" style="font-size:12px;">Total matches: <strong>${total}</strong></div>
       </div>
     </div>
   `;
@@ -1226,12 +1278,12 @@ function updateTrendDetailBar(idx) {
   if (!bar) return;
   const p = trendChartPoints[idx];
   if (!p) {
-    bar.innerHTML = `<span class="muted">Nessun dato nel periodo</span>`;
+    bar.innerHTML = `<span class="muted">No data available</span>`;
     return;
   }
   bar.innerHTML = `
-    <span><strong>${escapeHtml(formatFullDateIt(p.day))}</strong> · ${p.dayW}V/${p.dayM}P</span>
-    <span class="trend-detail-wr">Tot: ${p.cumW}V/${p.cumM}P (${Math.round(p.wr)}%)</span>
+    <span><strong>${escapeHtml(formatFullDateIt(p.day))}</strong> · ${p.dayW}W/${p.dayM}M</span>
+    <span class="trend-detail-wr">Total: ${p.cumW}W/${p.cumM}M (${Math.round(p.wr)}%)</span>
   `;
 }
 
@@ -1250,7 +1302,7 @@ function renderWinrateTrend() {
   if (!currentDeckHistory.length) {
     trendChartPoints = [];
     selectedTrendIdx = -1;
-    if (bar) bar.innerHTML = `<span class="muted">Registra almeno una sessione</span>`;
+    if (bar) bar.innerHTML = `<span class="muted">Log at least one session</span>`;
     if (shell) shell.classList.add("hidden");
     box.innerHTML = "";
     return;
@@ -1398,7 +1450,7 @@ function renderWinrateTrendSvg(autoScrollToEnd = false) {
 function renderDeckHistoryList() {
   const container = $("deck-history-list");
   if (!currentDeckHistory.length) {
-    container.innerHTML = `<p class="muted">Nessuna sessione registrata per questo mazzo.</p>`;
+    container.innerHTML = `<p class="muted">No sessions logged for this deck yet.</p>`;
     return;
   }
 
@@ -1412,10 +1464,10 @@ function renderDeckHistoryList() {
       return `
         <div class="history-row">
           <div>
-            <div class="history-score">${w}V / ${m}P (${wr}%)</div>
+            <div class="history-score">${w}W / ${m}M (${wr}%)</div>
             <div class="history-date">${escapeHtml(dateStr)}</div>
           </div>
-          <button type="button" class="history-del-btn" onclick="deleteDeckHistoryEntry('${escapeHtml(r.id)}')">Elimina</button>
+          <button type="button" class="history-del-btn" onclick="deleteDeckHistoryEntry('${escapeHtml(r.id)}')">Delete</button>
         </div>
       `;
     })
@@ -1423,7 +1475,7 @@ function renderDeckHistoryList() {
 }
 
 window.deleteDeckHistoryEntry = async function (entryId) {
-  if (!entryId || !confirm("Eliminare questa sessione?")) return;
+  if (!entryId || !confirm("Delete this session?")) return;
   const { error } = await sb.from("deck_history").delete().eq("id", entryId);
   if (error) {
     setStatus($("deck-status"), error.message, "err");
@@ -1438,11 +1490,11 @@ $("btn-save-deck-match")?.addEventListener("click", async () => {
   const playedOn = $("deck-date").value || new Date().toISOString().slice(0, 10);
 
   if (!selectedDeckId) {
-    setStatus($("deck-status"), "Seleziona prima un mazzo.", "err");
+    setStatus($("deck-status"), "Select a deck first.", "err");
     return;
   }
 
-  setStatus($("deck-status"), "Salvataggio...");
+  setStatus($("deck-status"), "Saving...");
 
   const sameDayRows = currentDeckHistory.filter(
     (r) => String(r.played_on || "").slice(0, 10) === playedOn
@@ -1498,13 +1550,13 @@ $("btn-save-deck-match")?.addEventListener("click", async () => {
   $("deck-wins").value = "0";
   setStatus(
     $("deck-status"),
-    sameDayRows.length > 0 ? "Sessione del giorno aggiornata!" : "Partita salvata!",
+    sameDayRows.length > 0 ? "Daily session updated!" : "Match saved!",
     "ok"
   );
   await loadDeckHistory(selectedDeckId);
 });
 
-// ---- ICONE SVG MAGIC, LISTA CARTE, PREZZI, TAG, PROXY & GRIGLIA ----
+// ---- MANA SVG, CARD LIST, PRICES, TAGS, PROXY & GRID ----
 let deckSearchResults = [];
 let deckSearchTimer = null;
 let changeCmdResults = [];
@@ -1670,7 +1722,6 @@ async function syncDeckCardsJson(deckId, extraFields = {}) {
 
   const { error } = await sb.from("decks").update(updateBody).eq("id", deckId);
   if (error) {
-    // Fallback nel caso qualche colonna extra (es. bg_image_url) non sia aggiornabile
     await sb
       .from("decks")
       .update({ cards_json: payload, changelog_json: currentDeckChangelog })
@@ -1678,9 +1729,8 @@ async function syncDeckCardsJson(deckId, extraFields = {}) {
   }
 }
 
-
 async function loadDeckCards(deck) {
-  setStatus($("deck-cards-status"), "Caricamento lista...");
+  setStatus($("deck-cards-status"), "Loading card list...");
   $("deck-cards-list").innerHTML = "";
   $("deck-search-results").innerHTML = "";
   $("deck-search-dropdown")?.classList.add("hidden");
@@ -1697,7 +1747,6 @@ async function loadDeckCards(deck) {
   setStatus($("deck-cards-status"), "");
   renderDeckCardsList(currentDeckCards);
 
-  // Recupera in background i prezzi EUR mancanti da Scryfall
   fetchMissingDeckPrices(deck.id);
 }
 
@@ -1764,7 +1813,10 @@ async function fetchMissingDeckPrices(deckId) {
             c.card_image_url =
               hit.sc.image_uris?.normal || hit.sc.card_faces?.[0]?.image_uris?.normal || "";
           }
-          if (!c.set_code && hit.sc.set) c.set_code = hit.sc.set.toUpperCase();
+          if (!c.set_code && hit.sc.set) {
+            c.set = hit.sc.set.toLowerCase();
+            c.set_code = hit.sc.set.toUpperCase();
+          }
           if (!c.set_name && hit.sc.set_name) c.set_name = hit.sc.set_name;
           if (!c.collector_number && hit.sc.collector_number) c.collector_number = hit.sc.collector_number;
           if ((!c.color_identity || !c.color_identity.length) && Array.isArray(hit.sc.color_identity)) {
@@ -1775,7 +1827,7 @@ async function fetchMissingDeckPrices(deckId) {
         }
       }
     } catch {
-      // ignora
+      // ignore
     }
   }
 
@@ -1805,26 +1857,25 @@ function updateDeckTotalPriceBadge() {
   }
 }
 
-
 function updateDeckCardCountAndCi() {
   const totalCount = currentDeckCards.reduce((acc, c) => acc + Math.max(1, Number(c.quantity || 1)), 0);
-  $("deck-detail-count").textContent = totalCount > 0 ? `${totalCount} carte` : "";
+  $("deck-detail-count").textContent = totalCount > 0 ? `${totalCount} cards` : "";
   updateDeckTotalPriceBadge();
   updateDeckCommanderCiUi();
 }
-  
+
 function getCardCategory(card) {
-  if (card.is_commander) return "Comandante";
+  if (card.is_commander) return "Commander";
   const tl = String(card.type_line || "").toLowerCase();
-  if (tl.includes("creature")) return "Creature";
-  if (tl.includes("planeswalker")) return "Planeswalker";
-  if (tl.includes("instant")) return "Istantanee";
-  if (tl.includes("sorcery")) return "Stregonerie";
-  if (tl.includes("artifact")) return "Artefatti";
-  if (tl.includes("enchantment")) return "Incantesimi";
-  if (tl.includes("battle")) return "Battaglie";
-  if (tl.includes("land")) return "Terre";
-  return "Altro";
+  if (tl.includes("creature")) return "Creatures";
+  if (tl.includes("planeswalker")) return "Planeswalkers";
+  if (tl.includes("instant")) return "Instants";
+  if (tl.includes("sorcery")) return "Sorceries";
+  if (tl.includes("artifact")) return "Artifacts";
+  if (tl.includes("enchantment")) return "Enchantments";
+  if (tl.includes("battle")) return "Battles";
+  if (tl.includes("land")) return "Lands";
+  return "Other";
 }
 
 function buildGroupedDeckSections(cards) {
@@ -1834,11 +1885,11 @@ function buildGroupedDeckSections(cards) {
     cards.forEach((c, idx) => {
       const item = { ...c, _idx: idx };
       if (c.is_commander) {
-        if (!groups.has("Comandante")) groups.set("Comandante", []);
-        groups.get("Comandante").push(item);
+        if (!groups.has("Commander")) groups.set("Commander", []);
+        groups.get("Commander").push(item);
         return;
       }
-      const tags = Array.isArray(c.tags) && c.tags.length > 0 ? c.tags : ["Senza tag"];
+      const tags = Array.isArray(c.tags) && c.tags.length > 0 ? c.tags : ["Untagged"];
       tags.forEach((tg) => {
         if (!groups.has(tg)) groups.set(tg, []);
         groups.get(tg).push(item);
@@ -1846,19 +1897,19 @@ function buildGroupedDeckSections(cards) {
     });
 
     const keys = Array.from(groups.keys()).sort((a, b) => {
-      if (a === "Comandante") return -1;
-      if (b === "Comandante") return 1;
-      if (a === "Senza tag") return 1;
-      if (b === "Senza tag") return -1;
-      return a.localeCompare(b, "it");
+      if (a === "Commander") return -1;
+      if (b === "Commander") return 1;
+      if (a === "Untagged") return 1;
+      if (b === "Untagged") return -1;
+      return a.localeCompare(b, "en");
     });
 
     return keys.map((k) => ({ title: k, list: groups.get(k) }));
   }
 
   const order = [
-    "Comandante", "Creature", "Planeswalker", "Istantanee",
-    "Stregonerie", "Artefatti", "Incantesimi", "Battaglie", "Terre", "Altro",
+    "Commander", "Creatures", "Planeswalkers", "Instants",
+    "Sorceries", "Artifacts", "Enchantments", "Battles", "Lands", "Other",
   ];
   cards.forEach((c, idx) => {
     const cat = getCardCategory(c);
@@ -1893,7 +1944,7 @@ function sortDeckCardsSlice(list) {
       const ca = parseCmcFromManaCost(a.mana_cost);
       const cb = parseCmcFromManaCost(b.mana_cost);
       if (ca !== cb) return ca - cb;
-      return String(a.name || "").localeCompare(String(b.name || ""), "it");
+      return String(a.name || "").localeCompare(String(b.name || ""), "en");
     });
   }
   if (deckSortMode === "price") {
@@ -1901,27 +1952,28 @@ function sortDeckCardsSlice(list) {
       const pa = Number(a.price_eur || 0) * Math.max(1, Number(a.quantity || 1));
       const pb = Number(b.price_eur || 0) * Math.max(1, Number(b.quantity || 1));
       if (pb !== pa) return pb - pa;
-      return String(a.name || "").localeCompare(String(b.name || ""), "it");
+      return String(a.name || "").localeCompare(String(b.name || ""), "en");
     });
   }
-  return arr.sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "it"));
+  return arr.sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "en"));
 }
 
 function renderDeckCardsList(cards) {
   const container = $("deck-cards-list");
   const curDeck = myDecks.find((d) => String(d.id) === String(selectedDeckId));
   const isCmdDeck = isCommanderFormat(curDeck?.format || curDeck?.type || "");
-  const hasCommander = cards.some((c) => c && c.is_commander);
+  const commandersList = cards.filter((c) => c && c.is_commander);
+  const hasCommander = commandersList.length > 0;
 
   if (!cards.length && !isCmdDeck) {
-    container.innerHTML = `<p class="muted">Nessuna carta nel mazzo. Usa la ricerca qui sopra per aggiungerle.</p>`;
+    container.innerHTML = `<p class="muted">No cards in this deck yet. Use the search bar above to add some.</p>`;
     return;
   }
 
   const sections = buildGroupedDeckSections(cards);
 
   if (isCmdDeck && !hasCommander) {
-    sections.unshift({ title: "Comandante", list: [] });
+    sections.unshift({ title: "Commander", list: [] });
   }
 
   if (deckViewMode === "grid") {
@@ -1929,10 +1981,10 @@ function renderDeckCardsList(cards) {
       .map((sec) => {
         const list = sortDeckCardsSlice(sec.list);
         const catCount = list.reduce((s, c) => s + Math.max(1, Number(c.quantity || 1)), 0);
-        const isCmdCol = sec.title === "Comandante";
+        const isCmdCol = sec.title === "Commander";
         const cmdActionBtn =
           isCmdCol && isCmdDeck
-            ? `<button type="button" class="deck-cat-mini-btn" onclick="openChangeCommanderModal()">${hasCommander ? "Cambia" : "Scegli"}</button>`
+            ? `<button type="button" class="deck-cat-mini-btn" onclick="openChangeCommanderModal(1)">${hasCommander ? "Edit" : "Choose"}</button>`
             : "";
         const stackItems = list.length
           ? list
@@ -1950,7 +2002,7 @@ function renderDeckCardsList(cards) {
                 `;
               })
               .join("")
-          : `<p class="muted" style="font-size:12px;margin:4px 0;">Nessun comandante impostato.</p>`;
+          : `<p class="muted" style="font-size:12px;margin:4px 0;">No commander set.</p>`;
 
         return `
           <div class="deck-stack-col ${isCmdCol ? "is-commander-col" : ""}">
@@ -1970,20 +2022,25 @@ function renderDeckCardsList(cards) {
     .map((sec) => {
       const list = sortDeckCardsSlice(sec.list);
       const catCount = list.reduce((s, c) => s + Math.max(1, Number(c.quantity || 1)), 0);
+      const isCmdSec = sec.title === "Commander";
+      const addPartnerBtn =
+        isCmdSec && isCmdDeck && commandersList.length === 1
+          ? `<button type="button" class="deck-cat-mini-btn" onclick="openChangeCommanderModal(2)">+ Partner</button>`
+          : "";
 
       let rows = "";
-      if (sec.title === "Comandante" && !list.length) {
+      if (isCmdSec && !list.length) {
         rows = `
           <div class="deck-card-row">
             <div class="deck-card-main">
-              <span class="muted">Nessun comandante impostato</span>
+              <span class="muted">No commander set</span>
             </div>
-            <button type="button" class="deck-cmd-inline-btn" onclick="openChangeCommanderModal()">Scegli</button>
+            <button type="button" class="deck-cmd-inline-btn" onclick="openChangeCommanderModal(1)">Choose</button>
           </div>
         `;
       } else {
         rows = list
-          .map((c) => {
+          .map((c, rowIdx) => {
             const qty = Math.max(1, Number(c.quantity || 1));
             const crown = c.is_commander ? "👑 " : "";
             const manaHtml = renderManaPipsHtml(c.mana_cost);
@@ -1994,8 +2051,9 @@ function renderDeckCardsList(cards) {
                   ? `<span class="card-price-inline">${formatEur(Number(c.price_eur) * qty)}</span>`
                   : "";
             const proxyBadge = c.is_proxy ? `<span class="card-proxy-tag">PROXY</span>` : "";
+            const targetSlot = rowIdx === 0 ? 1 : 2;
             const rightControlsHtml = c.is_commander
-              ? `<button type="button" class="deck-cmd-inline-btn" onclick="openChangeCommanderModal()">Cambia</button>`
+              ? `<button type="button" class="deck-cmd-inline-btn" onclick="openChangeCommanderModal(${targetSlot})">Change</button>`
               : `
                   <div class="deck-qty-controls">
                     <button type="button" class="deck-qty-btn" onclick="changeDeckCardQty(${c._idx}, -1)">−</button>
@@ -2024,13 +2082,17 @@ function renderDeckCardsList(cards) {
 
       return `
         <div class="deck-cat-block">
-          <div class="deck-cat-title"><span>${escapeHtml(sec.title)}</span><span data-cat-count="${escapeHtml(sec.title)}">${catCount}</span></div>
+          <div class="deck-cat-title">
+            <span>${escapeHtml(sec.title)}</span>
+            <span class="deck-cat-right">${addPartnerBtn}<span data-cat-count="${escapeHtml(sec.title)}">${catCount}</span></span>
+          </div>
           ${rows}
         </div>
       `;
     })
     .join("");
 }
+
 window.changeDeckCardQty = async function (cardIdx, delta) {
   const card = currentDeckCards[cardIdx];
   if (!card || !selectedDeckId || card.is_commander) return;
@@ -2039,7 +2101,7 @@ window.changeDeckCardQty = async function (cardIdx, delta) {
   const newQty = curQty + delta;
 
   if (newQty <= 0) {
-    if (!confirm(`Rimuovere "${card.name}" dal mazzo?`)) return;
+    if (!confirm(`Remove "${card.name}" from deck?`)) return;
     if (card.id) {
       const { error } = await sb.from("deck_cards").delete().eq("id", card.id);
       if (error) {
@@ -2065,7 +2127,7 @@ window.changeDeckCardQty = async function (cardIdx, delta) {
     return;
   }
 
-  // Aggiornamento immediato sul posto (zero flash della pagina)
+  // In-place update (no page flash)
   card.quantity = newQty;
   document.querySelectorAll(`[data-card-qty-idx="${cardIdx}"]`).forEach((el) => {
     el.textContent = String(newQty);
@@ -2108,14 +2170,72 @@ window.changeDeckCardQty = async function (cardIdx, delta) {
   );
   await syncDeckCardsJson(selectedDeckId);
 };
-// ---- CAMBIA COMANDANTE ----
-let changeCmdTimer = null;
 
-window.openChangeCommanderModal = function () {
+// ---- EDIT COMMANDERS (COMMANDER + PARTNER) ----
+let changeCmdTimer = null;
+let editCmdSlot1 = null;
+let editCmdSlot2 = null;
+let editActiveCmdSlot = 1;
+
+function renderEditCommanderSlots() {
+  const wrap = $("edit-cmd-slots");
+  if (!wrap) return;
+
+  const s1Name = editCmdSlot1?.name || "";
+  const s2Name = editCmdSlot2?.name || "";
+
+  wrap.innerHTML = `
+    <div class="cmd-slot-card ${editActiveCmdSlot === 1 ? "active" : ""}" onclick="selectEditCmdSlot(1)">
+      <div class="cmd-slot-top">
+        <span class="cmd-slot-label">Commander</span>
+        ${s1Name ? `<button type="button" class="cmd-slot-clear" onclick="event.stopPropagation(); clearEditCmdSlot(1)">×</button>` : ""}
+      </div>
+      <div class="cmd-slot-value ${s1Name ? "" : "empty"}">${s1Name ? `👑 ${escapeHtml(s1Name)}` : "Tap to pick..."}</div>
+    </div>
+    <div class="cmd-slot-card ${editActiveCmdSlot === 2 ? "active" : ""}" onclick="selectEditCmdSlot(2)">
+      <div class="cmd-slot-top">
+        <span class="cmd-slot-label">Partner (opt.)</span>
+        ${s2Name ? `<button type="button" class="cmd-slot-clear" onclick="event.stopPropagation(); clearEditCmdSlot(2)">×</button>` : ""}
+      </div>
+      <div class="cmd-slot-value ${s2Name ? "" : "empty"}">${s2Name ? `👑 ${escapeHtml(s2Name)}` : "+ Add Partner"}</div>
+    </div>
+  `;
+
+  const inp = $("change-cmd-input");
+  if (inp) {
+    inp.placeholder = editActiveCmdSlot === 1 ? "Search Commander..." : "Search Partner / Background...";
+  }
+}
+
+window.selectEditCmdSlot = function (slot) {
+  editActiveCmdSlot = slot === 2 ? 2 : 1;
+  renderEditCommanderSlots();
+  $("change-cmd-input")?.focus();
+};
+
+window.clearEditCmdSlot = function (slot) {
+  if (slot === 1) {
+    editCmdSlot1 = editCmdSlot2;
+    editCmdSlot2 = null;
+    editActiveCmdSlot = 1;
+  } else {
+    editCmdSlot2 = null;
+    editActiveCmdSlot = 2;
+  }
+  renderEditCommanderSlots();
+};
+
+window.openChangeCommanderModal = function (initialSlot = 1) {
+  const existingCmds = currentDeckCards.filter((c) => c && c.is_commander);
+  editCmdSlot1 = existingCmds[0] || null;
+  editCmdSlot2 = existingCmds[1] || null;
+  editActiveCmdSlot = initialSlot === 2 ? 2 : 1;
+
   changeCmdResults = [];
   if ($("change-cmd-input")) $("change-cmd-input").value = "";
   if ($("change-cmd-results")) $("change-cmd-results").innerHTML = "";
   setStatus($("change-cmd-status"), "");
+  renderEditCommanderSlots();
   $("commander-modal")?.classList.remove("hidden");
   setTimeout(() => $("change-cmd-input")?.focus(), 50);
 };
@@ -2133,7 +2253,7 @@ async function searchChangeCommander() {
     setStatus($("change-cmd-status"), "");
     return;
   }
-  setStatus($("change-cmd-status"), "Ricerca su Scryfall...");
+  setStatus($("change-cmd-status"), "Searching Scryfall...");
   try {
     const resp = await fetch(
       `https://api.scryfall.com/cards/search?q=${encodeURIComponent(`${q} is:commander`)}&unique=cards`
@@ -2146,10 +2266,11 @@ async function searchChangeCommander() {
     changeCmdResults = (json.data || []).slice(0, 12);
     if (!changeCmdResults.length) {
       box.innerHTML = "";
-      setStatus($("change-cmd-status"), "Nessun comandante trovato.");
+      setStatus($("change-cmd-status"), "No commanders found.");
       return;
     }
     setStatus($("change-cmd-status"), "");
+    const btnLabel = editActiveCmdSlot === 2 ? "Set Partner" : "Set Commander";
     box.innerHTML = changeCmdResults
       .map((c, i) => {
         const img = c.image_uris?.normal || c.card_faces?.[0]?.image_uris?.normal || "";
@@ -2159,13 +2280,13 @@ async function searchChangeCommander() {
             ${img ? `<img class="deck-search-tile-img" src="${escapeHtml(img)}" alt="${escapeHtml(c.name || "")}" loading="lazy" />` : `<div class="deck-search-tile-img"></div>`}
             <div class="deck-search-tile-name">${escapeHtml(c.name || "")}</div>
             <div class="deck-search-tile-price">${formatEur(price)}</div>
-            <button type="button" class="deck-add-btn" onclick="applyNewCommander(${i})">Imposta</button>
+            <button type="button" class="deck-add-btn" onclick="pickEditCommander(${i})">${btnLabel}</button>
           </div>
         `;
       })
       .join("");
   } catch {
-    setStatus($("change-cmd-status"), "Errore di connessione a Scryfall.", "err");
+    setStatus($("change-cmd-status"), "Scryfall connection error.", "err");
   }
 }
 
@@ -2175,16 +2296,43 @@ $("change-cmd-input")?.addEventListener("input", () => {
   changeCmdTimer = setTimeout(searchChangeCommander, 350);
 });
 
-
-window.applyNewCommander = async function (idx) {
+window.pickEditCommander = function (idx) {
   const sc = changeCmdResults[idx];
-  if (!sc || !selectedDeckId) return;
+  if (!sc) return;
 
-  setStatus($("change-cmd-status"), "Aggiornamento comandante...");
+  const pickedName = String(sc.name || "").toLowerCase();
+  if (editActiveCmdSlot === 1) {
+    if (editCmdSlot2 && String(editCmdSlot2.name || "").toLowerCase() === pickedName) {
+      editCmdSlot2 = null;
+    }
+    editCmdSlot1 = { _fromScryfall: true, sc, name: sc.name };
+  } else {
+    if (editCmdSlot1 && String(editCmdSlot1.name || "").toLowerCase() === pickedName) {
+      setStatus($("change-cmd-status"), "Partner must be a different card.", "err");
+      return;
+    }
+    if (!editCmdSlot1) {
+      editCmdSlot1 = { _fromScryfall: true, sc, name: sc.name };
+    } else {
+      editCmdSlot2 = { _fromScryfall: true, sc, name: sc.name };
+    }
+  }
 
-  // Rimuove il flag comandante dalle carte precedenti
+  $("change-cmd-results").innerHTML = "";
+  if ($("change-cmd-input")) $("change-cmd-input").value = "";
+  setStatus($("change-cmd-status"), "");
+  renderEditCommanderSlots();
+};
+
+$("btn-save-commanders")?.addEventListener("click", async () => {
+  if (!selectedDeckId) return;
+  const chosenSlots = [editCmdSlot1, editCmdSlot2].filter(Boolean);
+  const chosenNames = new Set(chosenSlots.map((s) => String(s.name || "").toLowerCase()));
+
+  setStatus($("change-cmd-status"), "Saving commanders...");
+
   for (const c of currentDeckCards) {
-    if (c.is_commander) {
+    if (c.is_commander && !chosenNames.has(String(c.name || "").toLowerCase())) {
       c.is_commander = false;
       if (c.id) {
         await sb.from("deck_cards").update({ is_commander: false }).eq("id", c.id);
@@ -2192,85 +2340,106 @@ window.applyNewCommander = async function (idx) {
     }
   }
 
-  const existing = currentDeckCards.find(
-    (c) => String(c.name || "").toLowerCase() === String(sc.name || "").toLowerCase()
-  );
+  let newHeroArtUrl = "";
 
-  const normalUrl = sc.image_uris?.normal || sc.card_faces?.[0]?.image_uris?.normal || "";
-  const artUrl = sc.image_uris?.art_crop || sc.card_faces?.[0]?.image_uris?.art_crop || normalUrl;
-  const manaCost = extractManaCostFromScryfall(sc);
-  const oracleText = extractOracleTextFromScryfall(sc);
-  const colorIdentity = resolveCardColorIdentity({
-    color_identity: sc.color_identity,
-    colors: sc.colors,
-    mana_cost: manaCost,
-    oracle_text: oracleText,
-  });
-  const priceEur = extractScryfallEurPrice(sc, false);
-  const setLower = String(sc.set || "").trim().toLowerCase();
-
-  if (existing) {
-    existing.is_commander = true;
-    existing.quantity = 1;
-    existing.mana_cost = manaCost || existing.mana_cost || "";
-    existing.oracle_text = oracleText || existing.oracle_text || "";
-    existing.color_identity = colorIdentity;
-    if (existing.id) {
-      await sb
-        .from("deck_cards")
-        .update({
-          is_commander: true,
-          quantity: 1,
-          mana_cost: existing.mana_cost,
-          oracle_text: existing.oracle_text,
-        })
-        .eq("id", existing.id);
+  for (let i = 0; i < chosenSlots.length; i++) {
+    const slotObj = chosenSlots[i];
+    if (!slotObj._fromScryfall) {
+      slotObj.is_commander = true;
+      slotObj.quantity = 1;
+      if (i === 0 && !newHeroArtUrl) {
+        newHeroArtUrl = toArtCropIfPossible(slotObj.image_url || slotObj.card_image_url || "");
+      }
+      continue;
     }
-  } else {
-    const newRow = {
-      deck_id: selectedDeckId,
-      scryfall_id: sc.id || "",
-      name: sc.name || "",
-      type_line: sc.type_line || "",
-      oracle_text: oracleText,
+
+    const sc = slotObj.sc;
+    const normalUrl = sc.image_uris?.normal || sc.card_faces?.[0]?.image_uris?.normal || "";
+    const artUrl = sc.image_uris?.art_crop || sc.card_faces?.[0]?.image_uris?.art_crop || normalUrl;
+    if (i === 0 && artUrl) newHeroArtUrl = artUrl;
+
+    const manaCost = extractManaCostFromScryfall(sc);
+    const oracleText = extractOracleTextFromScryfall(sc);
+    const colorIdentity = resolveCardColorIdentity({
+      color_identity: sc.color_identity,
+      colors: sc.colors,
       mana_cost: manaCost,
-      image_url: normalUrl,
-      quantity: 1,
-      is_commander: true,
-    };
-    const { data: inserted } = await sb
-      .from("deck_cards")
-      .insert(newRow)
-      .select("id, name, type_line, oracle_text, mana_cost, image_url, quantity, is_commander, scryfall_id")
-      .single();
-
-    currentDeckCards.unshift({
-      ...(inserted || newRow),
-      card_image_url: normalUrl,
-      color_identity: colorIdentity,
-      set: setLower,
-      set_code: setLower.toUpperCase(),
-      set_name: sc.set_name || "",
-      collector_number: sc.collector_number || "",
-      foil: false,
-      price_eur: priceEur,
-      is_proxy: false,
-      tags: [],
+      oracle_text: oracleText,
     });
+    const priceEur = extractScryfallEurPrice(sc, false);
+    const setLower = String(sc.set || "").trim().toLowerCase();
 
-    currentDeckChangelog = applyCardDeltaToChangelog(
-      currentDeckChangelog, currentDeckHistory, sc.name, 0, 1
+    const existing = currentDeckCards.find(
+      (c) => String(c.name || "").toLowerCase() === String(sc.name || "").toLowerCase()
     );
+
+    if (existing) {
+      existing.is_commander = true;
+      existing.quantity = 1;
+      existing.mana_cost = manaCost || existing.mana_cost || "";
+      existing.oracle_text = oracleText || existing.oracle_text || "";
+      existing.color_identity = colorIdentity;
+      if (existing.id) {
+        await sb
+          .from("deck_cards")
+          .update({
+            is_commander: true,
+            quantity: 1,
+            mana_cost: existing.mana_cost,
+            oracle_text: existing.oracle_text,
+          })
+          .eq("id", existing.id);
+      }
+    } else {
+      const newRow = {
+        deck_id: selectedDeckId,
+        scryfall_id: sc.id || "",
+        name: sc.name || "",
+        type_line: sc.type_line || "",
+        oracle_text: oracleText,
+        mana_cost: manaCost,
+        image_url: normalUrl,
+        quantity: 1,
+        is_commander: true,
+      };
+      const { data: inserted } = await sb
+        .from("deck_cards")
+        .insert(newRow)
+        .select("id, name, type_line, oracle_text, mana_cost, image_url, quantity, is_commander, scryfall_id")
+        .single();
+
+      currentDeckCards.unshift({
+        ...(inserted || newRow),
+        card_image_url: normalUrl,
+        color_identity: colorIdentity,
+        set: setLower,
+        set_code: setLower.toUpperCase(),
+        set_name: sc.set_name || "",
+        collector_number: sc.collector_number || "",
+        foil: false,
+        price_eur: priceEur,
+        is_proxy: false,
+        tags: [],
+      });
+
+      currentDeckChangelog = applyCardDeltaToChangelog(
+        currentDeckChangelog,
+        currentDeckHistory,
+        sc.name,
+        0,
+        1
+      );
+    }
   }
 
-  if (artUrl) applyDeckHeroBg(artUrl);
+  if (newHeroArtUrl) applyDeckHeroBg(newHeroArtUrl);
   updateDeckCardCountAndCi();
   renderDeckCardsList(currentDeckCards);
-  await syncDeckCardsJson(selectedDeckId, artUrl ? { bg_image_url: artUrl } : {});
+  await syncDeckCardsJson(selectedDeckId, newHeroArtUrl ? { bg_image_url: newHeroArtUrl } : {});
   $("commander-modal")?.classList.add("hidden");
-};
+});
 
-// ---- RICERCA A GRIGLIA & AGGIUNTA CARTE DA SCRYFALL ----
+// ---- CARD SEARCH GRID & ADD CARD FROM SCRYFALL ----
 async function performDeckCardSearch() {
   const input = $("deck-card-search-input");
   const rawQuery = (input?.value || "").trim();
@@ -2294,7 +2463,7 @@ async function performDeckCardSearch() {
     q = `${rawQuery} id<=${ciToken}`;
   }
 
-  setStatus($("deck-search-status"), "Ricerca su Scryfall...");
+  setStatus($("deck-search-status"), "Searching Scryfall...");
   try {
     const resp = await fetch(
       `https://api.scryfall.com/cards/search?q=${encodeURIComponent(q)}&unique=cards`
@@ -2302,7 +2471,7 @@ async function performDeckCardSearch() {
     if (!resp.ok) {
       deckSearchResults = [];
       resBox.innerHTML = "";
-      setStatus($("deck-search-status"), "Nessuna carta trovata.");
+      setStatus($("deck-search-status"), "No cards found.");
       return;
     }
     const json = await resp.json();
@@ -2323,13 +2492,13 @@ async function performDeckCardSearch() {
             ${img ? `<img class="deck-search-tile-img" src="${escapeHtml(img)}" alt="${escapeHtml(c.name || "")}" loading="lazy" />` : `<div class="deck-search-tile-img"></div>`}
             <div class="deck-search-tile-name">${escapeHtml(c.name || "")}</div>
             <div class="deck-search-tile-price">${formatEur(price)}</div>
-            <button type="button" class="deck-add-btn" onclick="addCardToCurrentDeck(${i})">Aggiungi</button>
+            <button type="button" class="deck-add-btn" onclick="addCardToCurrentDeck(${i})">Add</button>
           </div>
         `;
       })
       .join("");
   } catch {
-    setStatus($("deck-search-status"), "Errore di connessione a Scryfall.", "err");
+    setStatus($("deck-search-status"), "Scryfall connection error.", "err");
   }
 }
 
@@ -2371,7 +2540,7 @@ window.addCardToCurrentDeck = async function (resultIdx) {
 
   if (existingIdx !== -1) {
     await changeDeckCardQty(existingIdx, 1);
-    setStatus($("deck-search-status"), `Aumentata quantità di ${sc.name}.`, "ok");
+    setStatus($("deck-search-status"), `Increased quantity of ${sc.name}.`, "ok");
     return;
   }
 
@@ -2403,7 +2572,7 @@ window.addCardToCurrentDeck = async function (resultIdx) {
     is_commander: false,
   };
 
-  setStatus($("deck-search-status"), `Aggiunta di ${sc.name}...`);
+  setStatus($("deck-search-status"), `Adding ${sc.name}...`);
   const { data: inserted, error } = await sb
     .from("deck_cards")
     .insert(newRow)
@@ -2440,17 +2609,17 @@ window.addCardToCurrentDeck = async function (resultIdx) {
   updateDeckCardCountAndCi();
   renderDeckCardsList(currentDeckCards);
   await syncDeckCardsJson(selectedDeckId);
-  setStatus($("deck-search-status"), `${sc.name} aggiunta al mazzo!`, "ok");
+  setStatus($("deck-search-status"), `${sc.name} added to deck!`, "ok");
 };
 
-// ---- DETTAGLIO CARTA: INFO, CAMBIO ESPANSIONE, PROXY & TAG ----
+// ---- CARD DETAIL MODAL: INFO, EDITION, PROXY & TAGS ----
 function renderCardTagsModalUi(card) {
   const chipsEl = $("card-tags-chips");
   const suggEl = $("card-tag-suggestions");
   const curTags = Array.isArray(card.tags) ? card.tags : [];
 
   if (!curTags.length) {
-    chipsEl.innerHTML = `<span class="muted" style="font-size:11px;">Nessun tag assegnato</span>`;
+    chipsEl.innerHTML = `<span class="muted" style="font-size:11px;">No tags assigned</span>`;
   } else {
     chipsEl.innerHTML = curTags
       .map((tg, i) => `
@@ -2462,7 +2631,6 @@ function renderCardTagsModalUi(card) {
       .join("");
   }
 
-  // Suggerimenti: tag già usati nel mazzo + preset
   const allKnown = new Set(DEFAULT_TAG_PRESETS);
   currentDeckCards.forEach((c) => {
     (c.tags || []).forEach((t) => allKnown.add(t));
@@ -2489,6 +2657,7 @@ window.addTagToActiveCard = async function (rawTag) {
   renderDeckCardsList(currentDeckCards);
   await syncDeckCardsJson(selectedDeckId);
 };
+
 window.removeTagFromActiveCard = async function (tagIdx) {
   const card = currentDeckCards[activeDetailCardIdx];
   if (!card || !Array.isArray(card.tags)) return;
@@ -2547,7 +2716,7 @@ $("card-edition-select")?.addEventListener("change", async (e) => {
   card.price_eur = newPrice;
   $("card-preview-price").textContent = card.is_proxy ? "PROXY" : formatEur(newPrice);
 
-  setStatus($("card-detail-status"), "Aggiornamento edizione...");
+  setStatus($("card-detail-status"), "Updating edition...");
   if (card.id) {
     await sb
       .from("deck_cards")
@@ -2557,7 +2726,7 @@ $("card-edition-select")?.addEventListener("change", async (e) => {
   updateDeckTotalPriceBadge();
   renderDeckCardsList(currentDeckCards);
   await syncDeckCardsJson(selectedDeckId);
-  setStatus($("card-detail-status"), `Edizione aggiornata: [${card.set_code}]`, "ok");
+  setStatus($("card-detail-status"), `Edition updated: [${card.set_code}]`, "ok");
 });
 
 window.openCardPreview = async function (cardIdx) {
@@ -2574,7 +2743,7 @@ window.openCardPreview = async function (cardIdx) {
   $("card-proxy-chk").checked = Boolean(card.is_proxy);
   $("card-preview-qty-wrap")?.classList.toggle("hidden", Boolean(card.is_commander));
   $("detail-qty-num").textContent = String(Math.max(1, Number(card.quantity || 1)));
-  $("card-preview-oracle").textContent = card.oracle_text || "Caricamento testo carta...";
+  $("card-preview-oracle").textContent = card.oracle_text || "Loading card text...";
   $("card-tag-input").value = "";
   setStatus($("card-detail-status"), "");
   renderCardTagsModalUi(card);
@@ -2584,11 +2753,10 @@ window.openCardPreview = async function (cardIdx) {
   imgEl.src = initialImg || "";
 
   const edSel = $("card-edition-select");
-  edSel.innerHTML = `<option value="">Caricamento edizioni...</option>`;
+  edSel.innerHTML = `<option value="">Loading editions...</option>`;
 
   $("card-preview-modal").classList.remove("hidden");
 
-  // Carica tutte le stampe della carta da Scryfall
   if (card.name) {
     try {
       const cleanName = String(card.name).split("//")[0].trim();
@@ -2618,7 +2786,7 @@ window.openCardPreview = async function (cardIdx) {
               (curPrint.card_faces || []).map((f) => f.oracle_text).filter(Boolean).join("\n---\n") ||
               "";
             card.oracle_text = ot;
-            $("card-preview-oracle").textContent = ot || "Nessun testo.";
+            $("card-preview-oracle").textContent = ot || "No rules text.";
           }
 
           edSel.innerHTML = activeCardPrints
@@ -2633,10 +2801,10 @@ window.openCardPreview = async function (cardIdx) {
           edSel.value = String(selectedIdx);
         }
       } else {
-        edSel.innerHTML = `<option value="">Nessuna edizione alternativa</option>`;
+        edSel.innerHTML = `<option value="">No alternative editions</option>`;
       }
     } catch {
-      edSel.innerHTML = `<option value="">Errore caricamento edizioni</option>`;
+      edSel.innerHTML = `<option value="">Error loading editions</option>`;
     }
   }
 };
@@ -2645,7 +2813,8 @@ $("btn-close-card-preview")?.addEventListener("click", () => {
   activeDetailCardIdx = -1;
   $("card-preview-modal").classList.add("hidden");
 });
-// ---- IMPORTA LISTA MAZZO (TESTO / MOXFIELD / ARCHIDEKT / MANABOX) ----
+
+// ---- IMPORT DECKLIST (TEXT / MOXFIELD / ARCHIDEKT / MANABOX) ----
 function parseDecklistText(rawText) {
   const lines = String(rawText || "").split(/\r?\n/);
   const parsed = [];
@@ -2686,7 +2855,6 @@ function parseDecklistText(rawText) {
       line = line.replace(/\*cmdr\*|\(commander\)|#commander\b/gi, "").trim();
     }
 
-    // Rimuove eventuali tag inline tipo #Ramp o ^Have^
     line = line.replace(/\s+#\S+/g, "").replace(/\^[^^]+\^/g, "").trim();
 
     let qty = 1;
@@ -2711,7 +2879,6 @@ function parseDecklistText(rawText) {
     parsed.push({ qty, name, setCode, collectorNumber, isFoil, isCommander });
   }
 
-  // Accorpa eventuali righe duplicate
   const merged = new Map();
   for (const item of parsed) {
     const key = `${item.name.toLowerCase()}|${item.setCode}|${item.collectorNumber}|${item.isFoil ? 1 : 0}|${item.isCommander ? 1 : 0}`;
@@ -2782,13 +2949,13 @@ $("btn-run-import-deck")?.addEventListener("click", async () => {
   const items = parseDecklistText(raw);
 
   if (!items.length) {
-    setStatus($("import-deck-status"), "Incolla almeno una carta valida.", "err");
+    setStatus($("import-deck-status"), "Paste at least one valid card.", "err");
     return;
   }
 
   const mode = document.querySelector('input[name="import-deck-mode"]:checked')?.value || "merge";
   if (mode === "replace" && currentDeckCards.length > 0) {
-    if (!confirm(`Sostituire tutte le ${currentDeckCards.length} carte attuali con la lista importata?`)) {
+    if (!confirm(`Replace all ${currentDeckCards.length} current cards with the imported list?`)) {
       return;
     }
   }
@@ -2797,9 +2964,8 @@ $("btn-run-import-deck")?.addEventListener("click", async () => {
   if (btnRun) btnRun.disabled = true;
 
   try {
-    setStatus($("import-deck-status"), `Ricerca di ${items.length} carte su Scryfall...`);
+    setStatus($("import-deck-status"), `Looking up ${items.length} cards on Scryfall...`);
 
-    // 1° passaggio: usa set + collector_number dove presenti
     const pass1 = await fetchScryfallBatchForImport(items, true);
     const resolved = [];
     const retryByName = [];
@@ -2818,7 +2984,6 @@ $("btn-run-import-deck")?.addEventListener("click", async () => {
       }
     }
 
-    // 2° passaggio di fallback: solo per nome per eventuali stampe non trovate
     const notFound = [];
     if (retryByName.length > 0) {
       const pass2 = await fetchScryfallBatchForImport(retryByName, false);
@@ -2831,13 +2996,12 @@ $("btn-run-import-deck")?.addEventListener("click", async () => {
     }
 
     if (!resolved.length) {
-      setStatus($("import-deck-status"), "Nessuna carta riconosciuta su Scryfall.", "err");
+      setStatus($("import-deck-status"), "No cards matched on Scryfall.", "err");
       return;
     }
 
-    setStatus($("import-deck-status"), `Salvataggio di ${resolved.length} carte su Supabase...`);
+    setStatus($("import-deck-status"), `Saving ${resolved.length} cards to Supabase...`);
 
-    // Mappa quantità precedenti per aggiornare correttamente il changelog desktop
     const prevQtyMap = new Map();
     for (const c of currentDeckCards) {
       const k = String(c.name || "").trim().toLowerCase();
@@ -2967,7 +3131,6 @@ $("btn-run-import-deck")?.addEventListener("click", async () => {
       }
     }
 
-    // Calcola le differenze di quantità per il changelog condiviso con l'app desktop
     const nextQtyMap = new Map();
     for (const c of currentDeckCards) {
       const k = String(c.name || "").trim().toLowerCase();
@@ -3005,15 +3168,15 @@ $("btn-run-import-deck")?.addEventListener("click", async () => {
     if (notFound.length > 0) {
       setStatus(
         $("import-deck-status"),
-        `Importate ${resolved.length} carte. Non trovate (${notFound.length}): ${notFound.slice(0, 5).join(", ")}${notFound.length > 5 ? "…" : ""}`,
+        `Imported ${resolved.length} cards. Not found (${notFound.length}): ${notFound.slice(0, 5).join(", ")}${notFound.length > 5 ? "…" : ""}`,
         "err"
       );
     } else {
       $("import-deck-modal")?.classList.add("hidden");
-      setStatus($("deck-cards-status"), `Importate ${resolved.length} carte!`, "ok");
+      setStatus($("deck-cards-status"), `Imported ${resolved.length} cards!`, "ok");
     }
   } catch (err) {
-    setStatus($("import-deck-status"), `Errore importazione: ${err.message || err}`, "err");
+    setStatus($("import-deck-status"), `Import error: ${err.message || err}`, "err");
   } finally {
     if (btnRun) btnRun.disabled = false;
   }
