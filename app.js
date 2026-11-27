@@ -20,7 +20,7 @@ const DEFAULT_SCANNER_WS_URL = "wss://manastat-scanner-server.onrender.com/ws/sc
 const STORAGE_SETS_KEY = "manastat_scanner_selected_sets";
 
 // Badge versione sempre visibile sopra la barra di navigazione
-const APP_UI_VERSION = "v3.4";
+const APP_UI_VERSION = "v3.5";
 let connectedServerVersion = "";
 
 function renderVersionBadge() {
@@ -541,10 +541,10 @@ async function onAuthenticated() {
     $("user-badge").textContent = currentUser.email;
   }
   const tasks = [loadDecks(), loadGroups()];
+  if (typeof loadUserCollection === "function") tasks.push(loadUserCollection());
   if (typeof loadProfile === "function") tasks.push(loadProfile());
   await Promise.all(tasks);
 }
-
 function formatSortKey(deck) {
   const fmt = String(deck.format || deck.type || "").trim();
   if (!fmt) return [2, 999, String(deck.name || "").toLowerCase()];
