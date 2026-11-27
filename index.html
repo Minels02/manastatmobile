@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>ManaStat Companion</title>
   <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="style.css?v=10" />
+  <link rel="stylesheet" href="style.css?v=15" />
 </head>
 <body>
   <div id="app">
@@ -307,31 +307,152 @@
           </div>
         </div>
       </section>
-      <!-- TAB 2: GRUPPI -->
+      <!-- TAB 2: GROUPS -->
       <section id="tab-groups" class="tab-panel">
         <div id="groups-list-view" class="card">
-          <h2>I tuoi gruppi</h2>
-          <p class="muted">Seleziona un gruppo per inserire una partita.</p>
+          <div class="decks-list-header">
+            <h2>My Groups</h2>
+            <button id="btn-open-new-group" type="button" class="btn-circle-plus" title="New Group">+</button>
+          </div>
+
+          <input
+            id="groups-search-input"
+            type="text"
+            placeholder="Search groups..."
+            autocomplete="off"
+            style="margin-bottom:8px;"
+          />
+
+          <!-- PENDING GROUP INVITATIONS -->
+          <div id="group-invites-section" class="group-invites-box hidden">
+            <div class="group-invites-title">Pending Invitations</div>
+            <div id="group-invites-list" class="group-invites-list"></div>
+          </div>
+
           <div id="groups-list-container" class="group-list"></div>
           <p id="group-list-status" class="status"></p>
         </div>
 
         <div id="group-detail-view" class="hidden">
           <div class="detail-header">
-            <button id="btn-back-to-groups" class="btn back-btn">← Tutti i gruppi</button>
-            <span class="muted">Scheda gruppo</span>
+            <button id="btn-back-to-groups" class="btn back-btn">← All Groups</button>
+            <div class="group-header-actions">
+              <button id="btn-rename-group" type="button" class="group-action-btn hidden">Rename</button>
+              <button id="btn-leave-group" type="button" class="deck-delete-btn">Leave</button>
+            </div>
           </div>
 
-          <div class="card">
-            <h2 id="group-detail-title">Gruppo</h2>
-            <label>Partecipanti &amp; Mazzi</label>
-            <div id="group-players-container"></div>
+          <div class="card group-hero-card">
+            <div class="group-hero-top">
+              <h2 id="group-detail-title" style="margin:0;">Group</h2>
+              <span id="group-detail-role" class="badge">Member</span>
+            </div>
+            <div id="group-detail-meta" class="muted" style="margin-top:4px;font-size:12px;"></div>
+          </div>
 
-            <label>Note (opzionali)</label>
-            <input id="group-notes" type="text" placeholder="Es. pod da 4, partita veloce..." />
+          <!-- GROUP SUB-TABS -->
+          <div class="group-subtabs" role="tablist">
+            <button type="button" class="group-subtab-btn active" data-gsubtab="group-sub-stats">Stats</button>
+            <button type="button" class="group-subtab-btn" data-gsubtab="group-sub-match">New Match</button>
+            <button type="button" class="group-subtab-btn" data-gsubtab="group-sub-decks">Decks</button>
+            <button type="button" class="group-subtab-btn" data-gsubtab="group-sub-members">Members</button>
+          </div>
 
-            <button id="btn-save-group-match" class="btn primary">Salva partita gruppo</button>
-            <p id="group-status" class="status"></p>
+          <!-- SUB-TAB 1: LEADERBOARDS & MATCH HISTORY -->
+          <div id="group-sub-stats" class="group-subpanel active">
+            <div class="card">
+              <h3>Player Leaderboard</h3>
+              <div id="group-player-lb" class="lb-list"></div>
+            </div>
+
+            <div class="card">
+              <h3>Deck Leaderboard</h3>
+              <div id="group-deck-lb" class="lb-list"></div>
+            </div>
+
+            <div class="card">
+              <h3>Match History</h3>
+              <div id="group-matches-list" class="group-matches-list"></div>
+            </div>
+          </div>
+
+          <!-- SUB-TAB 2: LOG NEW MATCH -->
+          <div id="group-sub-match" class="group-subpanel hidden">
+            <div class="card">
+              <h3>Log Group Match</h3>
+              <p class="muted" style="margin-top:0;font-size:12px;">
+                Select a deck for each participating player (at least 2) and pick the winner.
+              </p>
+              <div id="group-players-container"></div>
+
+              <label for="group-notes">Notes (optional)</label>
+              <input id="group-notes" type="text" placeholder="e.g. 4-player pod, fast combo win..." />
+
+              <button id="btn-save-group-match" type="button" class="btn primary">Save Match</button>
+              <p id="group-status" class="status"></p>
+            </div>
+          </div>
+
+          <!-- SUB-TAB 3: GROUP DECKS -->
+          <div id="group-sub-decks" class="group-subpanel hidden">
+            <div class="card">
+              <h3>Add Deck to Group</h3>
+              <label for="group-import-personal-deck">Link from My Decks</label>
+              <div class="deck-search-row">
+                <select id="group-import-personal-deck">
+                  <option value="">— Select personal deck —</option>
+                </select>
+                <button id="btn-add-personal-group-deck" type="button" class="btn primary small">Add</button>
+              </div>
+
+              <label for="group-custom-deck-name">Or enter custom deck name</label>
+              <div class="deck-search-row">
+                <input id="group-custom-deck-name" type="text" placeholder="e.g. Yuriko Tempo..." autocomplete="off" />
+                <button id="btn-add-custom-group-deck" type="button" class="btn small">Add</button>
+              </div>
+              <p id="group-decks-status" class="status"></p>
+            </div>
+
+            <div class="card">
+              <h3>Active Group Decks</h3>
+              <div id="group-decks-list" class="group-decks-list"></div>
+            </div>
+          </div>
+
+          <!-- SUB-TAB 4: MEMBERS & INVITE -->
+          <div id="group-sub-members" class="group-subpanel hidden">
+            <div class="card">
+              <h3>Invite Player</h3>
+              <div class="deck-search-row">
+                <input
+                  id="group-invite-input"
+                  type="text"
+                  placeholder="Username or email..."
+                  autocomplete="off"
+                />
+                <button id="btn-send-group-invite" type="button" class="btn primary small">Invite</button>
+              </div>
+              <p id="group-members-status" class="status"></p>
+            </div>
+
+            <div class="card">
+              <h3>Group Members</h3>
+              <div id="group-members-list" class="group-members-list"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- MODAL: NEW GROUP -->
+        <div id="new-group-modal" class="proposal-overlay hidden">
+          <div class="proposal-card modal-scroll-card">
+            <h2>New Group</h2>
+            <label for="new-group-name">Group Name</label>
+            <input id="new-group-name" type="text" placeholder="e.g. Friday Night Commander" autocomplete="off" />
+            <p id="new-group-status" class="status"></p>
+            <div class="proposal-actions">
+              <button id="btn-cancel-new-group" type="button" class="btn">Cancel</button>
+              <button id="btn-create-new-group" type="button" class="btn primary">Create Group</button>
+            </div>
           </div>
         </div>
       </section>
