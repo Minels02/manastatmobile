@@ -1713,3 +1713,172 @@ input[type="date"] {
   font-size: 11px;
   cursor: pointer;
 }
+
+/* ---- LAYOUT PIU LARGO SU MOBILE ---- */
+#app {
+  max-width: 680px;
+  padding: 8px 6px;
+}
+
+.card {
+  padding: 12px 10px;
+  margin-bottom: 10px;
+}
+
+.detail-hero-inner {
+  padding: 14px 12px;
+}
+
+.deck-banner-content {
+  padding: 12px 14px;
+}
+
+/* ---- FILTRO FORMATI & SEPARATORE PAGINA MAZZI ---- */
+.format-filter-bar {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 6px 0 4px;
+  margin-bottom: 6px;
+  scrollbar-width: none;
+}
+
+.format-filter-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.format-pill {
+  background: rgba(255, 255, 255, 0.05);
+  color: #94a3b8;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.format-pill.active {
+  background: #2e86de;
+  color: #ffffff;
+  border-color: #2e86de;
+}
+
+.decks-format-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 6px;
+}
+
+.decks-format-divider:first-child {
+  margin-top: 2px;
+}
+
+.decks-format-divider-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+
+.decks-format-divider-line {
+  flex: 1;
+  height: 1px;
+  background: rgba(148, 163, 184, 0.25);
+}
+
+.decks-format-divider-count {
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+}
+
+/* ---- PULSANTE ELIMINA MAZZO NEL BANNER ---- */
+.deck-hero-bottom-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.deck-hero-bottom-row .badge {
+  margin-left: 0;
+}
+
+.deck-delete-btn {
+  background: rgba(239, 68, 68, 0.18);
+  color: #fca5a5;
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  border-radius: 7px;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.deck-delete-btn:active {
+  background: rgba(239, 68, 68, 0.35);
+}
+
+/* ---- SELETTORE ORDINAMENTO & CAMBIA COMANDANTE INLINE ---- */
+.deck-list-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.deck-sort-select {
+  width: auto;
+  min-width: 78px;
+  padding: 6px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #e2e8f0;
+}
+
+.deck-cmd-inline-btn {
+  background: rgba(56, 189, 248, 0.14);
+  color: #7dd3fc;
+  border: 1px solid rgba(56, 189, 248, 0.38);
+  border-radius: 7px;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.deck-cmd-inline-btn:active {
+  background: rgba(56, 189, 248, 0.28);
+}
+
+.deck-cat-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.deck-cat-mini-btn {
+  background: rgba(56, 189, 248, 0.15);
+  color: #7dd3fc;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  border-radius: 5px;
+  padding: 1px 7px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: none;
+  letter-spacing: 0;
+  cursor: pointer;
+}
