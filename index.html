@@ -457,6 +457,230 @@
         </div>
       </section>
 
+      <!-- TAB: COLLECTION -->
+      <section id="tab-my-collection" class="tab-panel">
+        <div class="card">
+          <div class="decks-list-header">
+            <h2>My Collection</h2>
+            <div class="col-header-actions">
+              <button id="btn-open-col-import" type="button" class="deck-import-open-btn">Import</button>
+              <button id="btn-open-col-add" type="button" class="btn-circle-plus" title="Add Card">+</button>
+            </div>
+          </div>
+
+          <!-- COLLECTION KPI BAR -->
+          <div class="col-kpi-grid">
+            <div class="col-kpi-box">
+              <div class="col-kpi-label">Cards</div>
+              <div id="col-kpi-total" class="col-kpi-val">0</div>
+              <div id="col-kpi-unique" class="col-kpi-sub">0 unique</div>
+            </div>
+            <div class="col-kpi-box">
+              <div class="col-kpi-label">Value</div>
+              <div id="col-kpi-value" class="col-kpi-val green">€ 0.00</div>
+              <div id="col-kpi-foil" class="col-kpi-sub">0 foil</div>
+            </div>
+            <div class="col-kpi-box">
+              <div class="col-kpi-label">Sets</div>
+              <div id="col-kpi-sets" class="col-kpi-val">0</div>
+              <div class="col-kpi-sub">expansions</div>
+            </div>
+          </div>
+
+          <!-- SEARCH & VIEW CONTROLS -->
+          <div class="deck-search-row" style="margin-top:8px;">
+            <input
+              id="col-search-input"
+              type="text"
+              placeholder="Search name, set, #number..."
+              autocomplete="off"
+            />
+            <button id="btn-col-toggle-filters" type="button" class="btn small">Filters</button>
+          </div>
+
+          <!-- COLOR FILTER PILLS -->
+          <div id="col-color-filters" class="col-color-bar">
+            <button type="button" class="col-color-btn" data-col-color="W" title="White">
+              <img class="mana-svg" src="https://svgs.scryfall.io/card-symbols/W.svg" alt="W" />
+            </button>
+            <button type="button" class="col-color-btn" data-col-color="U" title="Blue">
+              <img class="mana-svg" src="https://svgs.scryfall.io/card-symbols/U.svg" alt="U" />
+            </button>
+            <button type="button" class="col-color-btn" data-col-color="B" title="Black">
+              <img class="mana-svg" src="https://svgs.scryfall.io/card-symbols/B.svg" alt="B" />
+            </button>
+            <button type="button" class="col-color-btn" data-col-color="R" title="Red">
+              <img class="mana-svg" src="https://svgs.scryfall.io/card-symbols/R.svg" alt="R" />
+            </button>
+            <button type="button" class="col-color-btn" data-col-color="G" title="Green">
+              <img class="mana-svg" src="https://svgs.scryfall.io/card-symbols/G.svg" alt="G" />
+            </button>
+            <button type="button" class="col-color-btn" data-col-color="C" title="Colorless">
+              <img class="mana-svg" src="https://svgs.scryfall.io/card-symbols/C.svg" alt="C" />
+            </button>
+          </div>
+
+          <!-- COLLAPSIBLE EXTRA FILTERS -->
+          <div id="col-filters-panel" class="col-filters-panel hidden">
+            <div class="row-2">
+              <div>
+                <label for="col-filter-set" style="margin-top:4px;">Set</label>
+                <select id="col-filter-set">
+                  <option value="ALL">All Sets</option>
+                </select>
+              </div>
+              <div>
+                <label for="col-filter-rarity" style="margin-top:4px;">Rarity</label>
+                <select id="col-filter-rarity">
+                  <option value="ALL">All Rarities</option>
+                  <option value="mythic">Mythic</option>
+                  <option value="rare">Rare</option>
+                  <option value="uncommon">Uncommon</option>
+                  <option value="common">Common</option>
+                </select>
+              </div>
+            </div>
+            <div class="row-2">
+              <div>
+                <label for="col-filter-finish" style="margin-top:6px;">Finish</label>
+                <select id="col-filter-finish">
+                  <option value="ALL">All Finishes</option>
+                  <option value="nonfoil">Non-Foil</option>
+                  <option value="foil">Foil</option>
+                </select>
+              </div>
+              <div>
+                <label for="col-sort-select" style="margin-top:6px;">Sort by</label>
+                <select id="col-sort-select">
+                  <option value="set">Set / #</option>
+                  <option value="alpha">Name A–Z</option>
+                  <option value="price">Price High–Low</option>
+                  <option value="rarity">Rarity</option>
+                  <option value="qty">Quantity</option>
+                </select>
+              </div>
+            </div>
+            <button id="btn-col-reset-filters" type="button" class="btn small" style="margin-top:8px;width:100%;">
+              Reset Filters
+            </button>
+          </div>
+
+          <!-- TOOLBAR: VIEW MODE + COUNT -->
+          <div class="col-toolbar-row">
+            <span id="col-shown-count" class="muted" style="font-size:12px;">0 cards</span>
+            <div class="seg-control">
+              <button type="button" id="btn-col-view-list" class="seg-btn active">List</button>
+              <button type="button" id="btn-col-view-grid" class="seg-btn">Grid</button>
+            </div>
+          </div>
+
+          <p id="col-page-status" class="status"></p>
+          <div id="col-cards-container" class="col-cards-container"></div>
+        </div>
+
+        <!-- MODAL: ADD CARD TO COLLECTION -->
+        <div id="col-add-modal" class="proposal-overlay hidden">
+          <div class="proposal-card modal-scroll-card">
+            <h2>Add to Collection</h2>
+            <div class="deck-search-row">
+              <input id="col-add-search-input" type="text" placeholder="Search card on Scryfall..." autocomplete="off" />
+              <button id="btn-col-add-search" type="button" class="btn primary small">Search</button>
+            </div>
+            <p id="col-add-status" class="status"></p>
+
+            <!-- Step 1: Search Results Grid -->
+            <div id="col-add-results" class="deck-search-grid"></div>
+
+            <!-- Step 2: Printing, Finish & Quantity Picker -->
+            <div id="col-add-picker" class="hidden" style="margin-top:10px;">
+              <div class="card-detail-top">
+                <div class="card-detail-img-wrap">
+                  <img id="col-add-preview-img" src="" alt="Card" class="card-preview-img" />
+                  <span id="col-add-foil-badge" class="col-foil-overlay-badge hidden">FOIL</span>
+                </div>
+                <div class="card-detail-head">
+                  <h3 id="col-add-card-name">Card</h3>
+                  <div id="col-add-card-price" class="card-price-pill" style="align-self:flex-start;">—</div>
+                  <label for="col-add-finish-select" style="margin-top:6px;">Finish</label>
+                  <select id="col-add-finish-select">
+                    <option value="nonfoil">Non-Foil</option>
+                    <option value="foil">Foil</option>
+                  </select>
+                  <label for="col-add-qty-input" style="margin-top:6px;">Quantity</label>
+                  <input id="col-add-qty-input" type="number" min="1" value="1" />
+                </div>
+              </div>
+
+              <label for="col-add-edition-select">Edition / Printing</label>
+              <select id="col-add-edition-select">
+                <option value="">Loading printings...</option>
+              </select>
+
+              <div class="proposal-actions" style="margin-top:10px;">
+                <button id="btn-col-add-back" type="button" class="btn">Back</button>
+                <button id="btn-col-add-confirm" type="button" class="btn primary">Add to Collection</button>
+              </div>
+            </div>
+
+            <button id="btn-close-col-add" type="button" class="btn" style="margin-top:10px;width:100%;">Close</button>
+          </div>
+        </div>
+
+        <!-- MODAL: IMPORT COLLECTION (CSV / TEXT) -->
+        <div id="col-import-modal" class="proposal-overlay hidden">
+          <div class="proposal-card modal-scroll-card">
+            <h2>Import Collection</h2>
+            <p class="muted" style="margin-top:0;font-size:12px;">
+              Upload a <strong>ManaBox / Moxfield CSV</strong> file or paste a card list below (set, collector # and Foil are preserved).
+            </p>
+
+            <label for="col-import-file">Upload CSV File</label>
+            <input id="col-import-file" type="file" accept=".csv,.txt,text/csv,text/plain" />
+
+            <label for="col-import-textarea">Or paste list</label>
+            <textarea
+              id="col-import-textarea"
+              class="import-textarea"
+              rows="7"
+              placeholder="1 Sol Ring (CMM) 410 *F*&#10;2 Arcane Signet (BRC) 134&#10;..."
+            ></textarea>
+
+            <p id="col-import-status" class="status"></p>
+            <div class="proposal-actions">
+              <button id="btn-cancel-col-import" type="button" class="btn">Cancel</button>
+              <button id="btn-run-col-import" type="button" class="btn primary">Import</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- MODAL: COLLECTION CARD DETAIL -->
+        <div id="col-detail-modal" class="proposal-overlay hidden">
+          <div class="proposal-card card-detail-modal">
+            <div class="col-detail-img-center">
+              <div id="col-detail-img-wrap" class="col-detail-img-wrap">
+                <img id="col-detail-img" src="" alt="Card" class="col-detail-img" />
+                <span id="col-detail-foil-badge" class="col-foil-overlay-badge hidden">✨ FOIL</span>
+              </div>
+            </div>
+            <h3 id="col-detail-name" style="margin:8px 0 2px;text-align:center;"></h3>
+            <p id="col-detail-meta" class="muted" style="margin:0 0 8px;text-align:center;font-size:12px;"></p>
+
+            <div class="col-detail-controls-row">
+              <span id="col-detail-price" class="card-price-pill">—</span>
+              <div class="deck-qty-controls">
+                <button type="button" id="btn-col-detail-minus" class="deck-qty-btn">−</button>
+                <span id="col-detail-qty" class="deck-qty-num">1</span>
+                <button type="button" id="btn-col-detail-plus" class="deck-qty-btn">+</button>
+              </div>
+            </div>
+
+            <div class="proposal-actions" style="margin-top:12px;">
+              <button id="btn-col-detail-delete" type="button" class="btn danger-btn">Delete</button>
+              <button id="btn-col-detail-close" type="button" class="btn primary">Close</button>
+            </div>
+          </div>
+        </div>
+      </section>
       <!-- TAB 3: SCANNER A TUTTO SCHERMO -->
       <section id="tab-collection" class="tab-panel">
         <div class="scanner-full-view">
@@ -590,12 +814,13 @@
         <button id="btn-logout" type="button" class="btn profile-logout-btn">Esci dall'account</button>
       </section>
 
-      <!-- NAVIGAZIONE IN BASSO -->
+      <!-- BOTTOM NAVIGATION -->
       <nav class="bottom-nav">
-        <button class="nav-btn active" data-tab="tab-decks">Mazzi</button>
-        <button class="nav-btn" data-tab="tab-groups">Gruppi</button>
+        <button class="nav-btn active" data-tab="tab-decks">Decks</button>
+        <button class="nav-btn" data-tab="tab-groups">Groups</button>
+        <button class="nav-btn" data-tab="tab-my-collection">Collection</button>
         <button class="nav-btn" data-tab="tab-collection">Scanner</button>
-        <button class="nav-btn" data-tab="tab-profile">Profilo</button>
+        <button class="nav-btn" data-tab="tab-profile">Profile</button>
       </nav>
     </main>
   </div>
