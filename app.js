@@ -12,6 +12,7 @@ let selectedGroupId = null;
 let groupMembers = [];
 let groupDecks = [];
 const artworkCache = new Map();
+const cardPriceCache = new Map();
 
 // Configurazione Server Scanner
 const SCANNER_HTTP_BASE = "https://manastat-scanner-server.onrender.com";
@@ -19,7 +20,7 @@ const DEFAULT_SCANNER_WS_URL = "wss://manastat-scanner-server.onrender.com/ws/sc
 const STORAGE_SETS_KEY = "manastat_scanner_selected_sets";
 
 // Badge versione sempre visibile sopra la barra di navigazione
-const APP_UI_VERSION = "v2.7";
+const APP_UI_VERSION = "v2.8";
 let connectedServerVersion = "";
 
 function renderVersionBadge() {
@@ -87,6 +88,17 @@ const PREFERRED_FORMATS = [
   "Casual",
 ];
 
+const DEFAULT_TAG_PRESETS = [
+  "Ramp",
+  "Draw",
+  "Removal",
+  "Board Wipe",
+  "Tutor",
+  "Protection",
+  "Finisher",
+  "Synergy",
+];
+
 function setStatus(el, msg, type = "") {
   if (!el) return;
   el.textContent = msg;
@@ -100,6 +112,31 @@ function escapeHtml(str) {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
+}
+
+function isCommanderFormat(fmt) {
+  const f = String(fmt || "").toLowerCase();
+  return f.includes("commander") || f.includes("edh") || f.includes("brawl");
+}
+
+function extractScryfallEurPrice(sc, isFoil = false) {
+  const prices = sc?.prices || {};
+  const raw = isFoil ? (prices.eur_foil || prices.eur) : (prices.eur || prices.eur_foil);
+  if (raw !== undefined && raw !== null && raw !== "") {
+    const num = parseFloat(raw);
+    if (!Number.isNaN(num)) return num;
+  }
+  const usd = isFoil ? (prices.usd_foil || prices.usd) : (prices.usd || prices.usd_foil);
+  if (usd !== undefined && usd !== null && usd !== "") {
+    const num = parseFloat(usd);
+    if (!Number.isNaN(num)) return Math.round(num * 0.92 * 100) / 100;
+  }
+  return null;
+}
+
+function formatEur(val) {
+  if (val === null || val === undefined || Number.isNaN(Number(val))) return "—";
+  return `€ ${Number(val).toFixed(2)}`;
 }
 
 if ($("deck-date")) {
@@ -352,6 +389,13 @@ function toArtCropIfPossible(url) {
   return u;
 }
 
+function toNormalCardUrl(url) {
+  const u = String(url || "").trim();
+  if (!u) return "";
+  if (u.includes("/art_crop/")) return u.replace("/art_crop/", "/normal/");
+  return u;
+}
+
 function extractDeckImageUrl(deck) {
   if (!deck || typeof deck !== "object") return "";
   const candidates = [
@@ -380,6 +424,8 @@ async function resolveDeckArtwork(deck) {
   if (deck.commander) candidates.push(String(deck.commander).trim());
   if (deck.name) candidates.push(String(deck.name).trim());
   if (Array.isArray(deck.cards_json)) {
+    const cmd = deck.cards_json.find((c) => c && c.is_commander && c.name);
+    if (cmd) candidates.unshift(cmd.name.trim());
     const firstCard = deck.cards_json.find((c) => c && typeof c.name === "string" && c.name.trim());
     if (firstCard) candidates.push(firstCard.name.trim());
   }
@@ -413,6 +459,196 @@ async function resolveDeckArtwork(deck) {
   }
   return "";
 }
+
+// ---- CREAZIONE NUOVO MAZZO DA MOBILE ----
+let newDeckSelectedCmd = null;
+let newDeckCmdResults = [];
+
+function toggleNewDeckCmdVisibility() {
+  const fmt = $("new-deck-format")?.value || "";
+  $("new-deck-cmd-section")?.classList.toggle("hidden", !isCommanderFormat(fmt));
+}
+
+function renderNewDeckSelectedCmd() {
+  const pill = $("new-deck-cmd-selected");
+  if (!pill) return;
+  if (!newDeckSelectedCmd) {
+    pill.classList.add("hidden");
+    pill.innerHTML = "";
+    return;
+  }
+  pill.classList.remove("hidden");
+  pill.innerHTML = `
+    <span>👑 ${escapeHtml(newDeckSelectedCmd.name)}</span>
+    <button type="button" class="btn small" onclick="clearNewDeckCmd()" style="width:auto;margin:0;padding:3px 7px;">×</button>
+  `;
+}
+
+window.clearNewDeckCmd = function () {
+  newDeckSelectedCmd = null;
+  renderNewDeckSelectedCmd();
+};
+
+window.pickNewDeckCmd = function (idx) {
+  const sc = newDeckCmdResults[idx];
+  if (!sc) return;
+  newDeckSelectedCmd = sc;
+  $("new-deck-cmd-results").innerHTML = "";
+  $("new-deck-cmd-input").value = sc.name || "";
+  if (!($("new-deck-name")?.value || "").trim()) {
+    $("new-deck-name").value = sc.name || "";
+  }
+  renderNewDeckSelectedCmd();
+};
+
+async function searchNewDeckCommander() {
+  const q = ($("new-deck-cmd-input")?.value || "").trim();
+  const box = $("new-deck-cmd-results");
+  if (q.length < 2) {
+    box.innerHTML = "";
+    return;
+  }
+  box.innerHTML = `<div class="muted" style="font-size:12px;padding:4px;">Ricerca...</div>`;
+  try {
+    const resp = await fetch(
+      `https://api.scryfall.com/cards/search?q=${encodeURIComponent(`${q} is:commander`)}&unique=cards`
+    );
+    let json = resp.ok ? await resp.json() : null;
+    if (!json || !json.data?.length) {
+      const fb = await fetch(`https://api.scryfall.com/cards/search?q=${encodeURIComponent(q)}&unique=cards`);
+      json = fb.ok ? await fb.json() : { data: [] };
+    }
+    newDeckCmdResults = (json.data || []).slice(0, 8);
+    if (!newDeckCmdResults.length) {
+      box.innerHTML = `<div class="muted" style="font-size:12px;padding:4px;">Nessuna carta trovata.</div>`;
+      return;
+    }
+    box.innerHTML = newDeckCmdResults
+      .map((c, i) => `
+        <div class="cmd-mini-row" onclick="pickNewDeckCmd(${i})">
+          <span>${escapeHtml(c.name || "")}</span>
+          <span>${renderManaPipsHtml(c.mana_cost || c.card_faces?.[0]?.mana_cost || "")}</span>
+        </div>
+      `)
+      .join("");
+  } catch {
+    box.innerHTML = `<div class="muted" style="font-size:12px;padding:4px;">Errore Scryfall.</div>`;
+  }
+}
+
+$("btn-open-new-deck")?.addEventListener("click", () => {
+  newDeckSelectedCmd = null;
+  newDeckCmdResults = [];
+  if ($("new-deck-name")) $("new-deck-name").value = "";
+  if ($("new-deck-format")) $("new-deck-format").value = "Commander";
+  if ($("new-deck-cmd-input")) $("new-deck-cmd-input").value = "";
+  if ($("new-deck-cmd-results")) $("new-deck-cmd-results").innerHTML = "";
+  setStatus($("new-deck-status"), "");
+  renderNewDeckSelectedCmd();
+  toggleNewDeckCmdVisibility();
+  $("new-deck-modal")?.classList.remove("hidden");
+});
+
+$("new-deck-format")?.addEventListener("change", toggleNewDeckCmdVisibility);
+$("btn-new-deck-cmd-search")?.addEventListener("click", searchNewDeckCommander);
+$("btn-cancel-new-deck")?.addEventListener("click", () => {
+  $("new-deck-modal")?.classList.add("hidden");
+});
+
+$("btn-create-new-deck")?.addEventListener("click", async () => {
+  const name = ($("new-deck-name")?.value || "").trim();
+  const fmt = $("new-deck-format")?.value || "Commander";
+  if (!name) {
+    setStatus($("new-deck-status"), "Inserisci un nome per il mazzo.", "err");
+    return;
+  }
+
+  setStatus($("new-deck-status"), "Creazione mazzo...");
+  const insertPayload = {
+    owner_id: currentUser.id,
+    name,
+    type: fmt,
+    format: fmt,
+  };
+
+  let createdDeck = null;
+  let { data, error } = await sb.from("decks").insert(insertPayload).select("*").single();
+  if (error) {
+    // Fallback se la colonna format non esiste o ha vincoli
+    const fb = await sb
+      .from("decks")
+      .insert({ owner_id: currentUser.id, name, type: fmt })
+      .select("*")
+      .single();
+    data = fb.data;
+    error = fb.error;
+  }
+
+  if (error || !data) {
+    setStatus($("new-deck-status"), error?.message || "Errore nella creazione.", "err");
+    return;
+  }
+
+  createdDeck = data;
+
+  // Se è stato selezionato un comandante, salvalo subito in deck_cards e cards_json
+  if (newDeckSelectedCmd && isCommanderFormat(fmt)) {
+    const sc = newDeckSelectedCmd;
+    const normalUrl = sc.image_uris?.normal || sc.card_faces?.[0]?.image_uris?.normal || "";
+    const artUrl = sc.image_uris?.art_crop || sc.card_faces?.[0]?.image_uris?.art_crop || normalUrl;
+    const manaCost = sc.mana_cost || sc.card_faces?.[0]?.mana_cost || "";
+    const oracleText = sc.oracle_text || sc.card_faces?.[0]?.oracle_text || "";
+    const priceEur = extractScryfallEurPrice(sc, false);
+
+    const cmdRow = {
+      deck_id: createdDeck.id,
+      scryfall_id: sc.id || "",
+      name: sc.name || "",
+      type_line: sc.type_line || "",
+      oracle_text: oracleText,
+      mana_cost: manaCost,
+      image_url: normalUrl,
+      quantity: 1,
+      is_commander: true,
+    };
+    await sb.from("deck_cards").insert(cmdRow);
+
+    const cardsJson = [
+      {
+        scryfall_id: sc.id || "",
+        name: sc.name || "",
+        type_line: sc.type_line || "",
+        oracle_text: oracleText,
+        mana_cost: manaCost,
+        image_url: artUrl,
+        card_image_url: normalUrl,
+        color_identity: sc.color_identity || [],
+        set: (sc.set || "").toUpperCase(),
+        set_code: (sc.set || "").toUpperCase(),
+        set_name: sc.set_name || "",
+        collector_number: sc.collector_number || "",
+        price_eur: priceEur,
+        quantity: 1,
+        is_commander: true,
+        is_proxy: false,
+        tags: [],
+      },
+    ];
+    try {
+      await sb.from("decks").update({ cards_json: cardsJson, bg_image_url: artUrl }).eq("id", createdDeck.id);
+    } catch {
+      try {
+        await sb.from("decks").update({ cards_json: cardsJson }).eq("id", createdDeck.id);
+      } catch {
+        // ignora
+      }
+    }
+  }
+
+  $("new-deck-modal")?.classList.add("hidden");
+  await loadDecks();
+  openDeckDetail(createdDeck.id);
+});
 
 // ---- PAGINA MAZZI ----
 async function loadDecks() {
@@ -459,7 +695,7 @@ async function loadDecks() {
 function renderDecksList() {
   const container = $("decks-list-container");
   if (!myDecks.length) {
-    container.innerHTML = `<p class="muted">Nessun mazzo trovato sul tuo account.</p>`;
+    container.innerHTML = `<p class="muted">Nessun mazzo trovato sul tuo account. Tocca + in alto per crearne uno.</p>`;
     return;
   }
 
@@ -494,6 +730,8 @@ function applyDeckHeroBg(bgUrl) {
 
 let currentDeckHistory = [];
 let currentDeckCards = [];
+let deckGroupMode = "type"; // "type" | "tag"
+let deckViewMode = "list";  // "list" | "grid"
 
 // Switch sotto-tab della scheda mazzo
 document.querySelectorAll(".deck-subtab-btn").forEach((btn) => {
@@ -516,14 +754,45 @@ function switchDeckSubtab(targetId) {
   if (btn) btn.click();
 }
 
+$("btn-group-type")?.addEventListener("click", () => {
+  deckGroupMode = "type";
+  $("btn-group-type").classList.add("active");
+  $("btn-group-tag").classList.remove("active");
+  renderDeckCardsList(currentDeckCards);
+});
+
+$("btn-group-tag")?.addEventListener("click", () => {
+  deckGroupMode = "tag";
+  $("btn-group-tag").classList.add("active");
+  $("btn-group-type").classList.remove("active");
+  renderDeckCardsList(currentDeckCards);
+});
+
+$("btn-view-list")?.addEventListener("click", () => {
+  deckViewMode = "list";
+  $("btn-view-list").classList.add("active");
+  $("btn-view-grid").classList.remove("active");
+  renderDeckCardsList(currentDeckCards);
+});
+
+$("btn-view-grid")?.addEventListener("click", () => {
+  deckViewMode = "grid";
+  $("btn-view-grid").classList.add("active");
+  $("btn-view-list").classList.remove("active");
+  renderDeckCardsList(currentDeckCards);
+});
+
 window.openDeckDetail = async function (deckId) {
   const deck = myDecks.find((d) => String(d.id) === String(deckId));
   if (!deck) return;
 
   selectedDeckId = deck.id;
+  const fmt = deck.format || deck.type || "Mazzo";
   $("deck-detail-title").textContent = deck.name || "Senza nome";
-  $("deck-detail-format").textContent = deck.format || deck.type || "Mazzo";
+  $("deck-detail-format").textContent = fmt;
   $("deck-detail-count").textContent = "";
+  $("deck-detail-price")?.classList.add("hidden");
+  $("deck-commander-bar")?.classList.toggle("hidden", !isCommanderFormat(fmt));
   applyDeckHeroBg(extractDeckImageUrl(deck) || deck._resolvedArtUrl || "");
   setStatus($("deck-status"), "");
   $("deck-search-dropdown")?.classList.add("hidden");
@@ -706,7 +975,6 @@ function renderWinrateTrendSvg(autoScrollToEnd = false) {
 
   const prevScrollLeft = scroller ? scroller.scrollLeft : 0;
 
-  // Finestra di 10 punti visibili, scorrevole orizzontalmente se > 10
   const visibleW = Math.max(240, scroller ? scroller.clientWidth : 280);
   const padL = 18;
   const padR = 18;
@@ -870,9 +1138,12 @@ $("btn-save-deck-match")?.addEventListener("click", async () => {
   await loadDeckHistory(selectedDeckId);
 });
 
-// ---- ICONE SVG MAGIC, LISTA CARTE, RICERCA A GRIGLIA & CONTATORI ----
+// ---- ICONE SVG MAGIC, LISTA CARTE, PREZZI, TAG, PROXY & GRIGLIA ----
 let deckSearchResults = [];
 let deckSearchTimer = null;
+let changeCmdResults = [];
+let activeDetailCardIdx = -1;
+let activeCardPrints = [];
 
 function manaSymbolToSvgUrl(sym) {
   const clean = String(sym || "").toUpperCase().replaceAll("/", "");
@@ -898,7 +1169,7 @@ function extractCommanderColorIdentity(cards) {
 
   const found = new Set();
   for (const cmd of commanders) {
-    if (Array.isArray(cmd.color_identity)) {
+    if (Array.isArray(cmd.color_identity) && cmd.color_identity.length > 0) {
       cmd.color_identity.forEach((col) => {
         const u = String(col || "").toUpperCase();
         if (order.includes(u)) found.add(u);
@@ -927,6 +1198,55 @@ function updateDeckCommanderCiUi() {
   }
 }
 
+function mergeDeckCardsWithJson(dbRows, jsonRows) {
+  const jsonById = new Map();
+  const jsonByName = new Map();
+  if (Array.isArray(jsonRows)) {
+    for (const jc of jsonRows) {
+      if (!jc || typeof jc !== "object") continue;
+      if (jc.scryfall_id) jsonById.set(String(jc.scryfall_id), jc);
+      if (jc.name) jsonByName.set(String(jc.name).toLowerCase(), jc);
+    }
+  }
+
+  if (Array.isArray(dbRows) && dbRows.length > 0) {
+    return dbRows.map((r) => {
+      const meta =
+        (r.scryfall_id && jsonById.get(String(r.scryfall_id))) ||
+        (r.name && jsonByName.get(String(r.name).toLowerCase())) ||
+        {};
+      return {
+        ...meta,
+        ...r,
+        card_image_url: meta.card_image_url || toNormalCardUrl(r.image_url || ""),
+        color_identity: Array.isArray(meta.color_identity) ? meta.color_identity : [],
+        set_code: (meta.set_code || meta.set || "").toUpperCase(),
+        set_name: meta.set_name || "",
+        collector_number: meta.collector_number || "",
+        price_eur: meta.price_eur ?? null,
+        is_proxy: Boolean(meta.is_proxy ?? meta.proxy),
+        tags: Array.isArray(meta.tags) ? meta.tags.map((t) => String(t).trim()).filter(Boolean) : [],
+      };
+    });
+  }
+
+  if (Array.isArray(jsonRows) && jsonRows.length > 0) {
+    return jsonRows.map((jc) => ({
+      ...jc,
+      card_image_url: jc.card_image_url || toNormalCardUrl(jc.image_url || ""),
+      color_identity: Array.isArray(jc.color_identity) ? jc.color_identity : [],
+      set_code: (jc.set_code || jc.set || "").toUpperCase(),
+      set_name: jc.set_name || "",
+      collector_number: jc.collector_number || "",
+      price_eur: jc.price_eur ?? null,
+      is_proxy: Boolean(jc.is_proxy ?? jc.proxy),
+      tags: Array.isArray(jc.tags) ? jc.tags.map((t) => String(t).trim()).filter(Boolean) : [],
+    }));
+  }
+
+  return [];
+}
+
 async function loadDeckCards(deck) {
   setStatus($("deck-cards-status"), "Caricamento lista...");
   $("deck-cards-list").innerHTML = "";
@@ -935,48 +1255,158 @@ async function loadDeckCards(deck) {
   setStatus($("deck-search-status"), "");
   if ($("deck-card-search-input")) $("deck-card-search-input").value = "";
 
-  let cards = [];
   const { data, error } = await sb
     .from("deck_cards")
     .select("id, name, type_line, oracle_text, mana_cost, image_url, quantity, is_commander, scryfall_id")
     .eq("deck_id", deck.id);
 
-  if (!error && Array.isArray(data) && data.length > 0) {
-    cards = data;
-  } else if (Array.isArray(deck.cards_json) && deck.cards_json.length > 0) {
-    cards = deck.cards_json;
-  }
-
-  currentDeckCards = cards;
+  currentDeckCards = mergeDeckCardsWithJson(error ? [] : data, deck.cards_json);
   updateDeckCardCountAndCi();
   setStatus($("deck-cards-status"), "");
-  renderDeckCardsList(cards);
+  renderDeckCardsList(currentDeckCards);
+
+  // Recupera in background i prezzi EUR mancanti da Scryfall
+  fetchMissingDeckPrices(deck.id);
+}
+
+async function fetchMissingDeckPrices(deckId) {
+  const missing = [];
+  for (const c of currentDeckCards) {
+    const key = String(c.scryfall_id || c.name || "").toLowerCase();
+    if (c.price_eur !== null && c.price_eur !== undefined) continue;
+    if (cardPriceCache.has(key)) {
+      c.price_eur = cardPriceCache.get(key);
+      continue;
+    }
+    missing.push(c);
+  }
+
+  updateDeckTotalPriceBadge();
+  if (!missing.length) {
+    renderDeckCardsList(currentDeckCards);
+    return;
+  }
+
+  for (let i = 0; i < missing.length; i += 75) {
+    if (selectedDeckId !== deckId) return;
+    const chunk = missing.slice(i, i + 75);
+    const identifiers = chunk
+      .map((c) => {
+        if (c.scryfall_id && /^[0-9a-f-]{36}$/i.test(c.scryfall_id)) {
+          return { id: c.scryfall_id };
+        }
+        const cleanName = String(c.name || "").split("//")[0].trim();
+        return cleanName ? { name: cleanName } : null;
+      })
+      .filter(Boolean);
+
+    if (!identifiers.length) continue;
+
+    try {
+      const resp = await fetch("https://api.scryfall.com/cards/collection", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ identifiers }),
+      });
+      if (!resp.ok) continue;
+      const body = await resp.json();
+      const byId = new Map();
+      const byName = new Map();
+      for (const sc of body.data || []) {
+        const p = extractScryfallEurPrice(sc, false);
+        if (sc.id) byId.set(String(sc.id), { p, sc });
+        if (sc.name) {
+          byName.set(String(sc.name).toLowerCase(), { p, sc });
+          byName.set(String(sc.name).split("//")[0].trim().toLowerCase(), { p, sc });
+        }
+      }
+
+      for (const c of chunk) {
+        const hit =
+          (c.scryfall_id && byId.get(String(c.scryfall_id))) ||
+          byName.get(String(c.name || "").toLowerCase()) ||
+          byName.get(String(c.name || "").split("//")[0].trim().toLowerCase());
+        if (hit) {
+          c.price_eur = hit.p;
+          if (!c.card_image_url) {
+            c.card_image_url =
+              hit.sc.image_uris?.normal || hit.sc.card_faces?.[0]?.image_uris?.normal || "";
+          }
+          if (!c.set_code && hit.sc.set) c.set_code = hit.sc.set.toUpperCase();
+          if (!c.set_name && hit.sc.set_name) c.set_name = hit.sc.set_name;
+          if (!c.collector_number && hit.sc.collector_number) c.collector_number = hit.sc.collector_number;
+          if ((!c.color_identity || !c.color_identity.length) && Array.isArray(hit.sc.color_identity)) {
+            c.color_identity = hit.sc.color_identity;
+          }
+          const key = String(c.scryfall_id || c.name || "").toLowerCase();
+          cardPriceCache.set(key, hit.p);
+        }
+      }
+    } catch {
+      // ignora
+    }
+  }
+
+  if (selectedDeckId === deckId) {
+    updateDeckCardCountAndCi();
+    renderDeckCardsList(currentDeckCards);
+  }
+}
+
+function updateDeckTotalPriceBadge() {
+  const badge = $("deck-detail-price");
+  if (!badge) return;
+  let total = 0;
+  let hasAny = false;
+  for (const c of currentDeckCards) {
+    if (c.is_proxy) continue;
+    if (c.price_eur !== null && c.price_eur !== undefined && !Number.isNaN(Number(c.price_eur))) {
+      total += Number(c.price_eur) * Math.max(1, Number(c.quantity || 1));
+      hasAny = true;
+    }
+  }
+  if (hasAny) {
+    badge.textContent = `€ ${total.toFixed(2)}`;
+    badge.classList.remove("hidden");
+  } else {
+    badge.classList.add("hidden");
+  }
 }
 
 function updateDeckCardCountAndCi() {
   const totalCount = currentDeckCards.reduce((acc, c) => acc + Math.max(1, Number(c.quantity || 1)), 0);
   $("deck-detail-count").textContent = totalCount > 0 ? `${totalCount} carte` : "";
+  updateDeckTotalPriceBadge();
   updateDeckCommanderCiUi();
 }
 
 async function syncDeckCardsJson(deckId) {
   const deck = myDecks.find((d) => String(d.id) === String(deckId));
-  if (deck) {
-    deck.cards_json = currentDeckCards.map((c) => ({
-      scryfall_id: c.scryfall_id || "",
-      name: c.name || "",
-      type_line: c.type_line || "",
-      oracle_text: c.oracle_text || "",
-      mana_cost: c.mana_cost || "",
-      image_url: c.image_url || "",
-      quantity: Math.max(1, Number(c.quantity || 1)),
-      is_commander: Boolean(c.is_commander),
-    }));
-    try {
-      await sb.from("decks").update({ cards_json: deck.cards_json }).eq("id", deckId);
-    } catch {
-      // ignora se la colonna non è presente
-    }
+  const payload = currentDeckCards.map((c) => ({
+    scryfall_id: c.scryfall_id || "",
+    name: c.name || "",
+    type_line: c.type_line || "",
+    oracle_text: c.oracle_text || "",
+    mana_cost: c.mana_cost || "",
+    image_url: c.image_url || "",
+    card_image_url: c.card_image_url || toNormalCardUrl(c.image_url || ""),
+    color_identity: Array.isArray(c.color_identity) ? c.color_identity : [],
+    set: (c.set_code || c.set || "").toUpperCase(),
+    set_code: (c.set_code || c.set || "").toUpperCase(),
+    set_name: c.set_name || "",
+    collector_number: c.collector_number || "",
+    price_eur: c.price_eur ?? null,
+    quantity: Math.max(1, Number(c.quantity || 1)),
+    is_commander: Boolean(c.is_commander),
+    is_proxy: Boolean(c.is_proxy),
+    tags: Array.isArray(c.tags) ? c.tags : [],
+  }));
+
+  if (deck) deck.cards_json = payload;
+  try {
+    await sb.from("decks").update({ cards_json: payload }).eq("id", deckId);
+  } catch {
+    // ignora se la colonna non esiste
   }
 }
 
@@ -994,6 +1424,50 @@ function getCardCategory(card) {
   return "Altro";
 }
 
+function buildGroupedDeckSections(cards) {
+  const groups = new Map();
+
+  if (deckGroupMode === "tag") {
+    cards.forEach((c, idx) => {
+      const item = { ...c, _idx: idx };
+      if (c.is_commander) {
+        if (!groups.has("Comandante")) groups.set("Comandante", []);
+        groups.get("Comandante").push(item);
+        return;
+      }
+      const tags = Array.isArray(c.tags) && c.tags.length > 0 ? c.tags : ["Senza tag"];
+      tags.forEach((tg) => {
+        if (!groups.has(tg)) groups.set(tg, []);
+        groups.get(tg).push(item);
+      });
+    });
+
+    const keys = Array.from(groups.keys()).sort((a, b) => {
+      if (a === "Comandante") return -1;
+      if (b === "Comandante") return 1;
+      if (a === "Senza tag") return 1;
+      if (b === "Senza tag") return -1;
+      return a.localeCompare(b, "it");
+    });
+
+    return keys.map((k) => ({ title: k, list: groups.get(k) }));
+  }
+
+  const order = [
+    "Comandante", "Creature", "Planeswalker", "Istantanee",
+    "Stregonerie", "Artefatti", "Incantesimi", "Battaglie", "Terre", "Altro",
+  ];
+  cards.forEach((c, idx) => {
+    const cat = getCardCategory(c);
+    if (!groups.has(cat)) groups.set(cat, []);
+    groups.get(cat).push({ ...c, _idx: idx });
+  });
+
+  return order
+    .filter((cat) => groups.has(cat))
+    .map((cat) => ({ title: cat, list: groups.get(cat) }));
+}
+
 function renderDeckCardsList(cards) {
   const container = $("deck-cards-list");
   if (!cards.length) {
@@ -1001,28 +1475,57 @@ function renderDeckCardsList(cards) {
     return;
   }
 
-  const order = [
-    "Comandante", "Creature", "Planeswalker", "Istantanee",
-    "Stregonerie", "Artefatti", "Incantesimi", "Battaglie", "Terre", "Altro",
-  ];
-  const groups = new Map();
+  const sections = buildGroupedDeckSections(cards);
 
-  cards.forEach((c, idx) => {
-    const cat = getCardCategory(c);
-    if (!groups.has(cat)) groups.set(cat, []);
-    groups.get(cat).push({ ...c, _idx: idx });
-  });
+  if (deckViewMode === "grid") {
+    container.innerHTML = `<div class="deck-visual-columns">${sections
+      .map((sec) => {
+        const list = sec.list.slice().sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "it"));
+        const catCount = list.reduce((s, c) => s + Math.max(1, Number(c.quantity || 1)), 0);
+        const isCmdCol = sec.title === "Comandante";
+        const stackItems = list
+          .map((c) => {
+            const qty = Math.max(1, Number(c.quantity || 1));
+            const imgUrl = c.card_image_url || toNormalCardUrl(c.image_url || "");
+            return `
+              <div class="deck-stack-item" onclick="openCardPreview(${c._idx})">
+                ${imgUrl
+                  ? `<img src="${escapeHtml(imgUrl)}" alt="${escapeHtml(c.name || "")}" loading="lazy" />`
+                  : `<div class="deck-stack-fallback">${escapeHtml(c.name || "")}</div>`}
+                ${qty > 1 ? `<span class="deck-stack-qty">${qty}x</span>` : ""}
+                ${c.is_proxy ? `<span class="deck-stack-proxy">PROXY</span>` : ""}
+              </div>
+            `;
+          })
+          .join("");
 
-  container.innerHTML = order
-    .filter((cat) => groups.has(cat))
-    .map((cat) => {
-      const list = groups.get(cat).sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "it"));
+        return `
+          <div class="deck-stack-col ${isCmdCol ? "is-commander-col" : ""}">
+            <div class="deck-cat-title"><span>${escapeHtml(sec.title)}</span><span>${catCount}</span></div>
+            <div class="deck-stack-cards">${stackItems}</div>
+          </div>
+        `;
+      })
+      .join("")}</div>`;
+    return;
+  }
+
+  container.innerHTML = sections
+    .map((sec) => {
+      const list = sec.list.slice().sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "it"));
       const catCount = list.reduce((s, c) => s + Math.max(1, Number(c.quantity || 1)), 0);
       const rows = list
         .map((c) => {
           const qty = Math.max(1, Number(c.quantity || 1));
           const crown = c.is_commander ? "👑 " : "";
           const manaHtml = renderManaPipsHtml(c.mana_cost);
+          const linePrice =
+            c.is_proxy
+              ? ""
+              : c.price_eur !== null && c.price_eur !== undefined
+                ? `<span class="card-price-inline">${formatEur(Number(c.price_eur) * qty)}</span>`
+                : "";
+          const proxyBadge = c.is_proxy ? `<span class="card-proxy-tag">PROXY</span>` : "";
           const qtyControlsHtml = c.is_commander
             ? ""
             : `
@@ -1035,8 +1538,14 @@ function renderDeckCardsList(cards) {
           return `
             <div class="deck-card-row">
               <div class="deck-card-main" onclick="openCardPreview(${c._idx})">
-                <span class="deck-card-name">${crown}${escapeHtml(c.name || "")}</span>
-                ${manaHtml ? `<div class="deck-card-mana">${manaHtml}</div>` : ""}
+                <div class="deck-card-name-line">
+                  <span class="deck-card-name">${crown}${escapeHtml(c.name || "")}</span>
+                  ${proxyBadge}
+                </div>
+                <div class="deck-card-subline">
+                  ${manaHtml ? `<div class="deck-card-mana">${manaHtml}</div>` : ""}
+                  ${linePrice}
+                </div>
               </div>
               ${qtyControlsHtml}
             </div>
@@ -1046,7 +1555,7 @@ function renderDeckCardsList(cards) {
 
       return `
         <div class="deck-cat-block">
-          <div class="deck-cat-title"><span>${cat}</span><span data-cat-count="${escapeHtml(cat)}">${catCount}</span></div>
+          <div class="deck-cat-title"><span>${escapeHtml(sec.title)}</span><span data-cat-count="${escapeHtml(sec.title)}">${catCount}</span></div>
           ${rows}
         </div>
       `;
@@ -1071,6 +1580,10 @@ window.changeDeckCardQty = async function (cardIdx, delta) {
       }
     }
     currentDeckCards.splice(cardIdx, 1);
+    if (activeDetailCardIdx === cardIdx) {
+      $("card-preview-modal")?.classList.add("hidden");
+      activeDetailCardIdx = -1;
+    }
     updateDeckCardCountAndCi();
     renderDeckCardsList(currentDeckCards);
     await syncDeckCardsJson(selectedDeckId);
@@ -1079,8 +1592,12 @@ window.changeDeckCardQty = async function (cardIdx, delta) {
 
   // Aggiornamento immediato sul posto (zero flash della pagina)
   card.quantity = newQty;
-  const qtyEl = document.querySelector(`[data-card-qty-idx="${cardIdx}"]`);
-  if (qtyEl) qtyEl.textContent = String(newQty);
+  document.querySelectorAll(`[data-card-qty-idx="${cardIdx}"]`).forEach((el) => {
+    el.textContent = String(newQty);
+  });
+  if (activeDetailCardIdx === cardIdx && $("detail-qty-num")) {
+    $("detail-qty-num").textContent = String(newQty);
+  }
 
   const cat = getCardCategory(card);
   const catCount = currentDeckCards
@@ -1094,15 +1611,146 @@ window.changeDeckCardQty = async function (cardIdx, delta) {
   if (card.id) {
     const { error } = await sb.from("deck_cards").update({ quantity: newQty }).eq("id", card.id);
     if (error) {
-      // Ripristina in caso di errore
       card.quantity = curQty;
-      if (qtyEl) qtyEl.textContent = String(curQty);
+      document.querySelectorAll(`[data-card-qty-idx="${cardIdx}"]`).forEach((el) => {
+        el.textContent = String(curQty);
+      });
       updateDeckCardCountAndCi();
       setStatus($("deck-cards-status"), error.message, "err");
       return;
     }
   }
   await syncDeckCardsJson(selectedDeckId);
+};
+
+// ---- CAMBIA COMANDANTE ----
+$("btn-open-change-commander")?.addEventListener("click", () => {
+  changeCmdResults = [];
+  if ($("change-cmd-input")) $("change-cmd-input").value = "";
+  if ($("change-cmd-results")) $("change-cmd-results").innerHTML = "";
+  setStatus($("change-cmd-status"), "");
+  $("commander-modal")?.classList.remove("hidden");
+});
+
+$("btn-close-cmd-modal")?.addEventListener("click", () => {
+  $("commander-modal")?.classList.add("hidden");
+});
+
+async function searchChangeCommander() {
+  const q = ($("change-cmd-input")?.value || "").trim();
+  const box = $("change-cmd-results");
+  if (q.length < 2) {
+    box.innerHTML = "";
+    setStatus($("change-cmd-status"), "");
+    return;
+  }
+  setStatus($("change-cmd-status"), "Ricerca su Scryfall...");
+  try {
+    const resp = await fetch(
+      `https://api.scryfall.com/cards/search?q=${encodeURIComponent(`${q} is:commander`)}&unique=cards`
+    );
+    let json = resp.ok ? await resp.json() : null;
+    if (!json || !json.data?.length) {
+      const fb = await fetch(`https://api.scryfall.com/cards/search?q=${encodeURIComponent(q)}&unique=cards`);
+      json = fb.ok ? await fb.json() : { data: [] };
+    }
+    changeCmdResults = (json.data || []).slice(0, 12);
+    if (!changeCmdResults.length) {
+      box.innerHTML = "";
+      setStatus($("change-cmd-status"), "Nessun comandante trovato.");
+      return;
+    }
+    setStatus($("change-cmd-status"), "");
+    box.innerHTML = changeCmdResults
+      .map((c, i) => {
+        const img = c.image_uris?.normal || c.card_faces?.[0]?.image_uris?.normal || "";
+        const price = extractScryfallEurPrice(c, false);
+        return `
+          <div class="deck-search-tile">
+            ${img ? `<img class="deck-search-tile-img" src="${escapeHtml(img)}" alt="${escapeHtml(c.name || "")}" loading="lazy" />` : `<div class="deck-search-tile-img"></div>`}
+            <div class="deck-search-tile-name">${escapeHtml(c.name || "")}</div>
+            <div class="deck-search-tile-price">${formatEur(price)}</div>
+            <button type="button" class="deck-add-btn" onclick="applyNewCommander(${i})">Imposta</button>
+          </div>
+        `;
+      })
+      .join("");
+  } catch {
+    setStatus($("change-cmd-status"), "Errore di connessione a Scryfall.", "err");
+  }
+}
+
+$("btn-change-cmd-search")?.addEventListener("click", searchChangeCommander);
+
+window.applyNewCommander = async function (idx) {
+  const sc = changeCmdResults[idx];
+  if (!sc || !selectedDeckId) return;
+
+  setStatus($("change-cmd-status"), "Aggiornamento comandante...");
+
+  // Rimuove il flag comandante dalle carte precedenti
+  for (const c of currentDeckCards) {
+    if (c.is_commander) {
+      c.is_commander = false;
+      if (c.id) {
+        await sb.from("deck_cards").update({ is_commander: false }).eq("id", c.id);
+      }
+    }
+  }
+
+  const existing = currentDeckCards.find(
+    (c) => String(c.name || "").toLowerCase() === String(sc.name || "").toLowerCase()
+  );
+
+  const normalUrl = sc.image_uris?.normal || sc.card_faces?.[0]?.image_uris?.normal || "";
+  const artUrl = sc.image_uris?.art_crop || sc.card_faces?.[0]?.image_uris?.art_crop || normalUrl;
+  const manaCost = sc.mana_cost || sc.card_faces?.[0]?.mana_cost || "";
+  const oracleText = sc.oracle_text || sc.card_faces?.[0]?.oracle_text || "";
+  const priceEur = extractScryfallEurPrice(sc, false);
+
+  if (existing) {
+    existing.is_commander = true;
+    existing.quantity = 1;
+    existing.color_identity = sc.color_identity || existing.color_identity || [];
+    if (existing.id) {
+      await sb.from("deck_cards").update({ is_commander: true, quantity: 1 }).eq("id", existing.id);
+    }
+  } else {
+    const newRow = {
+      deck_id: selectedDeckId,
+      scryfall_id: sc.id || "",
+      name: sc.name || "",
+      type_line: sc.type_line || "",
+      oracle_text: oracleText,
+      mana_cost: manaCost,
+      image_url: normalUrl,
+      quantity: 1,
+      is_commander: true,
+    };
+    const { data: inserted } = await sb
+      .from("deck_cards")
+      .insert(newRow)
+      .select("id, name, type_line, oracle_text, mana_cost, image_url, quantity, is_commander, scryfall_id")
+      .single();
+
+    currentDeckCards.unshift({
+      ...(inserted || newRow),
+      card_image_url: normalUrl,
+      color_identity: sc.color_identity || [],
+      set_code: (sc.set || "").toUpperCase(),
+      set_name: sc.set_name || "",
+      collector_number: sc.collector_number || "",
+      price_eur: priceEur,
+      is_proxy: false,
+      tags: [],
+    });
+  }
+
+  if (artUrl) applyDeckHeroBg(artUrl);
+  updateDeckCardCountAndCi();
+  renderDeckCardsList(currentDeckCards);
+  await syncDeckCardsJson(selectedDeckId);
+  $("commander-modal")?.classList.add("hidden");
 };
 
 // ---- RICERCA A GRIGLIA & AGGIUNTA CARTE DA SCRYFALL ----
@@ -1122,7 +1770,6 @@ async function performDeckCardSearch() {
 
   dropdown?.classList.remove("hidden");
 
-  // Filtro identità di colore del comandante sempre attivo quando presente
   let q = rawQuery;
   const ci = extractCommanderColorIdentity(currentDeckCards);
   if (ci.length > 0) {
@@ -1153,10 +1800,12 @@ async function performDeckCardSearch() {
           c.card_faces?.[0]?.image_uris?.normal ||
           c.card_faces?.[0]?.image_uris?.small ||
           "";
+        const price = extractScryfallEurPrice(c, false);
         return `
           <div class="deck-search-tile">
             ${img ? `<img class="deck-search-tile-img" src="${escapeHtml(img)}" alt="${escapeHtml(c.name || "")}" loading="lazy" />` : `<div class="deck-search-tile-img"></div>`}
             <div class="deck-search-tile-name">${escapeHtml(c.name || "")}</div>
+            <div class="deck-search-tile-price">${formatEur(price)}</div>
             <button type="button" class="deck-add-btn" onclick="addCardToCurrentDeck(${i})">Aggiungi</button>
           </div>
         `;
@@ -1173,7 +1822,6 @@ $("deck-card-search-input")?.addEventListener("input", () => {
   deckSearchTimer = setTimeout(performDeckCardSearch, 350);
 });
 
-// Riapre il menu risultati quando si riclicca sulla barra di ricerca
 $("deck-card-search-input")?.addEventListener("focus", () => {
   const val = ($("deck-card-search-input")?.value || "").trim();
   const dropdown = $("deck-search-dropdown");
@@ -1185,7 +1833,6 @@ $("deck-card-search-input")?.addEventListener("focus", () => {
   }
 });
 
-// Chiude il menu risultati quando si clicca fuori dal box ricerca
 document.addEventListener("click", (e) => {
   const searchCard = $("deck-search-card");
   const dropdown = $("deck-search-dropdown");
@@ -1218,6 +1865,7 @@ window.addCardToCurrentDeck = async function (resultIdx) {
     "";
   const manaCost = sc.mana_cost || sc.card_faces?.[0]?.mana_cost || "";
   const oracleText = sc.oracle_text || sc.card_faces?.[0]?.oracle_text || "";
+  const priceEur = extractScryfallEurPrice(sc, false);
 
   const newRow = {
     deck_id: selectedDeckId,
@@ -1243,41 +1891,223 @@ window.addCardToCurrentDeck = async function (resultIdx) {
     return;
   }
 
-  currentDeckCards.push(inserted || newRow);
+  currentDeckCards.push({
+    ...(inserted || newRow),
+    card_image_url: imageUrl,
+    color_identity: sc.color_identity || [],
+    set_code: (sc.set || "").toUpperCase(),
+    set_name: sc.set_name || "",
+    collector_number: sc.collector_number || "",
+    price_eur: priceEur,
+    is_proxy: false,
+    tags: [],
+  });
   updateDeckCardCountAndCi();
   renderDeckCardsList(currentDeckCards);
   await syncDeckCardsJson(selectedDeckId);
   setStatus($("deck-search-status"), `${sc.name} aggiunta al mazzo!`, "ok");
 };
 
+// ---- DETTAGLIO CARTA: INFO, CAMBIO ESPANSIONE, PROXY & TAG ----
+function renderCardTagsModalUi(card) {
+  const chipsEl = $("card-tags-chips");
+  const suggEl = $("card-tag-suggestions");
+  const curTags = Array.isArray(card.tags) ? card.tags : [];
+
+  if (!curTags.length) {
+    chipsEl.innerHTML = `<span class="muted" style="font-size:11px;">Nessun tag assegnato</span>`;
+  } else {
+    chipsEl.innerHTML = curTags
+      .map((tg, i) => `
+        <span class="tag-chip">
+          ${escapeHtml(tg)}
+          <button type="button" onclick="removeTagFromActiveCard(${i})">×</button>
+        </span>
+      `)
+      .join("");
+  }
+
+  // Suggerimenti: tag già usati nel mazzo + preset
+  const allKnown = new Set(DEFAULT_TAG_PRESETS);
+  currentDeckCards.forEach((c) => {
+    (c.tags || []).forEach((t) => allKnown.add(t));
+  });
+  const suggestions = Array.from(allKnown).filter(
+    (t) => !curTags.some((ct) => ct.toLowerCase() === t.toLowerCase())
+  );
+
+  suggEl.innerHTML = suggestions
+    .slice(0, 10)
+    .map((tg) => `<button type="button" class="tag-suggest-btn" onclick="addTagToActiveCard('${escapeHtml(tg)}')">+ ${escapeHtml(tg)}</button>`)
+    .join("");
+}
+
+window.addTagToActiveCard = async function (rawTag) {
+  const card = currentDeckCards[activeDetailCardIdx];
+  const tag = String(rawTag || "").trim();
+  if (!card || !tag) return;
+  if (!Array.isArray(card.tags)) card.tags = [];
+  if (card.tags.some((t) => t.toLowerCase() === tag.toLowerCase())) return;
+
+  card.tags.push(tag);
+  renderCardTagsModalUi(card);
+  renderDeckCardsList(currentDeckCards);
+  await syncDeckCardsJson(selectedDeckId);
+};
+
+window.removeTagFromActiveCard = async function (tagIdx) {
+  const card = currentDeckCards[activeDetailCardIdx];
+  if (!card || !Array.isArray(card.tags)) return;
+  card.tags.splice(tagIdx, 1);
+  renderCardTagsModalUi(card);
+  renderDeckCardsList(currentDeckCards);
+  await syncDeckCardsJson(selectedDeckId);
+};
+
+$("btn-add-card-tag")?.addEventListener("click", async () => {
+  const inp = $("card-tag-input");
+  const val = (inp?.value || "").trim();
+  if (!val) return;
+  inp.value = "";
+  await window.addTagToActiveCard(val);
+});
+
+$("card-proxy-chk")?.addEventListener("change", async (e) => {
+  const card = currentDeckCards[activeDetailCardIdx];
+  if (!card) return;
+  card.is_proxy = Boolean(e.target.checked);
+  $("card-preview-proxy-badge")?.classList.toggle("hidden", !card.is_proxy);
+  $("card-preview-price").textContent = card.is_proxy ? "PROXY" : formatEur(card.price_eur);
+  updateDeckTotalPriceBadge();
+  renderDeckCardsList(currentDeckCards);
+  await syncDeckCardsJson(selectedDeckId);
+});
+
+$("btn-detail-qty-minus")?.addEventListener("click", () => {
+  if (activeDetailCardIdx >= 0) changeDeckCardQty(activeDetailCardIdx, -1);
+});
+
+$("btn-detail-qty-plus")?.addEventListener("click", () => {
+  if (activeDetailCardIdx >= 0) changeDeckCardQty(activeDetailCardIdx, 1);
+});
+
+$("card-edition-select")?.addEventListener("change", async (e) => {
+  const idx = parseInt(e.target.value, 10);
+  const card = currentDeckCards[activeDetailCardIdx];
+  const pr = activeCardPrints[idx];
+  if (!card || !pr) return;
+
+  const newImg = pr.image_uris?.normal || pr.card_faces?.[0]?.image_uris?.normal || "";
+  const newPrice = extractScryfallEurPrice(pr, false);
+
+  card.scryfall_id = pr.id || card.scryfall_id;
+  card.set_code = (pr.set || "").toUpperCase();
+  card.set_name = pr.set_name || "";
+  card.collector_number = pr.collector_number || "";
+  if (newImg) {
+    card.image_url = newImg;
+    card.card_image_url = newImg;
+    $("card-preview-img").src = newImg;
+  }
+  card.price_eur = newPrice;
+  $("card-preview-price").textContent = card.is_proxy ? "PROXY" : formatEur(newPrice);
+
+  setStatus($("card-detail-status"), "Aggiornamento edizione...");
+  if (card.id) {
+    await sb
+      .from("deck_cards")
+      .update({ scryfall_id: card.scryfall_id, image_url: card.image_url })
+      .eq("id", card.id);
+  }
+  updateDeckTotalPriceBadge();
+  renderDeckCardsList(currentDeckCards);
+  await syncDeckCardsJson(selectedDeckId);
+  setStatus($("card-detail-status"), `Edizione aggiornata: [${card.set_code}]`, "ok");
+});
+
 window.openCardPreview = async function (cardIdx) {
   const card = currentDeckCards[cardIdx];
   if (!card) return;
+  activeDetailCardIdx = cardIdx;
+  activeCardPrints = [];
 
   $("card-preview-name").textContent = card.name || "";
+  $("card-preview-mana").innerHTML = renderManaPipsHtml(card.mana_cost);
   $("card-preview-meta").textContent = card.type_line || "";
+  $("card-preview-price").textContent = card.is_proxy ? "PROXY" : formatEur(card.price_eur);
+  $("card-preview-proxy-badge")?.classList.toggle("hidden", !card.is_proxy);
+  $("card-proxy-chk").checked = Boolean(card.is_proxy);
+  $("card-preview-qty-wrap")?.classList.toggle("hidden", Boolean(card.is_commander));
+  $("detail-qty-num").textContent = String(Math.max(1, Number(card.quantity || 1)));
+  $("card-preview-oracle").textContent = card.oracle_text || "Caricamento testo carta...";
+  $("card-tag-input").value = "";
+  setStatus($("card-detail-status"), "");
+  renderCardTagsModalUi(card);
+
   const imgEl = $("card-preview-img");
-  imgEl.src = "";
+  const initialImg = card.card_image_url || toNormalCardUrl(card.image_url || "");
+  imgEl.src = initialImg || "";
+
+  const edSel = $("card-edition-select");
+  edSel.innerHTML = `<option value="">Caricamento edizioni...</option>`;
+
   $("card-preview-modal").classList.remove("hidden");
 
-  let url = card.card_image_url || card.image_url || "";
-  if (url.includes("/art_crop/")) url = url.replace("/art_crop/", "/normal/");
-
-  if (!url && card.name) {
+  // Carica tutte le stampe della carta da Scryfall
+  if (card.name) {
     try {
-      const resp = await fetch(`https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(card.name)}`);
+      const cleanName = String(card.name).split("//")[0].trim();
+      const resp = await fetch(
+        `https://api.scryfall.com/cards/search?q=${encodeURIComponent(`!"${cleanName}"`)}&unique=prints&order=released&dir=desc`
+      );
       if (resp.ok) {
-        const sc = await resp.json();
-        url = sc?.image_uris?.normal || sc?.card_faces?.[0]?.image_uris?.normal || "";
+        const json = await resp.json();
+        activeCardPrints = json.data || [];
+        if (activeCardPrints.length > 0 && activeDetailCardIdx === cardIdx) {
+          let selectedIdx = activeCardPrints.findIndex((p) => p.id === card.scryfall_id);
+          if (selectedIdx === -1 && card.set_code) {
+            selectedIdx = activeCardPrints.findIndex(
+              (p) => (p.set || "").toUpperCase() === card.set_code.toUpperCase()
+            );
+          }
+          if (selectedIdx === -1) selectedIdx = 0;
+
+          const curPrint = activeCardPrints[selectedIdx];
+          if (!imgEl.src) {
+            const u = curPrint.image_uris?.normal || curPrint.card_faces?.[0]?.image_uris?.normal || "";
+            if (u) imgEl.src = u;
+          }
+          if (!card.oracle_text) {
+            const ot =
+              curPrint.oracle_text ||
+              (curPrint.card_faces || []).map((f) => f.oracle_text).filter(Boolean).join("\n---\n") ||
+              "";
+            card.oracle_text = ot;
+            $("card-preview-oracle").textContent = ot || "Nessun testo.";
+          }
+
+          edSel.innerHTML = activeCardPrints
+            .map((p, i) => {
+              const scode = (p.set || "").toUpperCase();
+              const cn = p.collector_number ? `#${p.collector_number}` : "";
+              const prEur = extractScryfallEurPrice(p, false);
+              const prTxt = prEur !== null ? ` · €${prEur.toFixed(2)}` : "";
+              return `<option value="${i}">[${escapeHtml(scode)}] ${escapeHtml(p.set_name || scode)} ${escapeHtml(cn)}${prTxt}</option>`;
+            })
+            .join("");
+          edSel.value = String(selectedIdx);
+        }
+      } else {
+        edSel.innerHTML = `<option value="">Nessuna edizione alternativa</option>`;
       }
     } catch {
-      // ignora
+      edSel.innerHTML = `<option value="">Errore caricamento edizioni</option>`;
     }
   }
-  if (url) imgEl.src = url;
 };
 
 $("btn-close-card-preview")?.addEventListener("click", () => {
+  activeDetailCardIdx = -1;
   $("card-preview-modal").classList.add("hidden");
 });
 
