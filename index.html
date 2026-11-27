@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>ManaStat Companion</title>
   <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="style.css?v=9" />
+  <link rel="stylesheet" href="style.css?v=10" />
 </head>
 <body>
   <div id="app">
@@ -30,7 +30,10 @@
       <!-- TAB 1: MAZZI -->
       <section id="tab-decks" class="tab-panel active">
         <div id="decks-list-view" class="card">
-          <h2>I tuoi mazzi</h2>
+          <div class="decks-list-header">
+            <h2>I tuoi mazzi</h2>
+            <button id="btn-open-new-deck" type="button" class="btn-circle-plus" title="Nuovo mazzo">+</button>
+          </div>
           <p class="muted">Tocca un mazzo per vedere statistiche, lista carte e partite.</p>
           <div id="decks-list-container" class="deck-cards-list"></div>
           <p id="deck-list-status" class="status"></p>
@@ -39,7 +42,10 @@
         <div id="deck-detail-view" class="hidden">
           <div class="detail-header">
             <button id="btn-back-to-decks" class="btn back-btn">← Tutti i mazzi</button>
-            <span id="deck-detail-count" class="muted"></span>
+            <div class="deck-detail-meta-right">
+              <span id="deck-detail-count" class="muted"></span>
+              <span id="deck-detail-price" class="deck-price-badge hidden"></span>
+            </div>
           </div>
 
           <div id="deck-detail-hero" class="detail-hero">
@@ -101,6 +107,24 @@
               </div>
             </div>
 
+            <!-- BARRA CONTROLLI: TIPO/TAG + LISTA/GRIGLIA + CAMBIA COMANDANTE -->
+            <div class="deck-list-toolbar">
+              <div class="seg-control">
+                <button type="button" id="btn-group-type" class="seg-btn active">Per Tipo</button>
+                <button type="button" id="btn-group-tag" class="seg-btn">Per Tag</button>
+              </div>
+              <div class="seg-control">
+                <button type="button" id="btn-view-list" class="seg-btn active">Lista</button>
+                <button type="button" id="btn-view-grid" class="seg-btn">Griglia</button>
+              </div>
+            </div>
+
+            <div id="deck-commander-bar" class="deck-commander-bar hidden">
+              <button type="button" id="btn-open-change-commander" class="btn small deck-cmd-btn">
+                👑 Cambia comandante
+              </button>
+            </div>
+
             <div class="card deck-cards-list-card">
               <p id="deck-cards-status" class="status"></p>
               <div id="deck-cards-list" class="deck-cards-grouped"></div>
@@ -136,12 +160,110 @@
           </div>
         </div>
 
-        <!-- POPUP ANTEPRIMA CARTA -->
+        <!-- MODAL: NUOVO MAZZO -->
+        <div id="new-deck-modal" class="proposal-overlay hidden">
+          <div class="proposal-card modal-scroll-card">
+            <h2>Nuovo mazzo</h2>
+            <label for="new-deck-name">Nome del mazzo</label>
+            <input id="new-deck-name" type="text" placeholder="Es. Atraxa Superfriends" autocomplete="off" />
+
+            <label for="new-deck-format">Formato</label>
+            <select id="new-deck-format">
+              <option value="Commander">Commander</option>
+              <option value="Standard">Standard</option>
+              <option value="Modern">Modern</option>
+              <option value="Pioneer">Pioneer</option>
+              <option value="Pauper">Pauper</option>
+              <option value="Legacy">Legacy</option>
+              <option value="Vintage">Vintage</option>
+              <option value="Brawl">Brawl</option>
+              <option value="Draft / Sealed">Draft / Sealed</option>
+              <option value="Casual">Casual</option>
+            </select>
+
+            <div id="new-deck-cmd-section">
+              <label for="new-deck-cmd-input">Comandante (opzionale)</label>
+              <div class="deck-search-row">
+                <input id="new-deck-cmd-input" type="text" placeholder="Cerca comandante..." autocomplete="off" />
+                <button id="btn-new-deck-cmd-search" type="button" class="btn small">Cerca</button>
+              </div>
+              <div id="new-deck-cmd-selected" class="cmd-selected-pill hidden"></div>
+              <div id="new-deck-cmd-results" class="cmd-mini-results"></div>
+            </div>
+
+            <p id="new-deck-status" class="status"></p>
+            <div class="proposal-actions">
+              <button id="btn-cancel-new-deck" type="button" class="btn">Annulla</button>
+              <button id="btn-create-new-deck" type="button" class="btn primary">Crea mazzo</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- MODAL: CAMBIA COMANDANTE -->
+        <div id="commander-modal" class="proposal-overlay hidden">
+          <div class="proposal-card modal-scroll-card">
+            <h2>Cambia comandante</h2>
+            <div class="deck-search-row">
+              <input id="change-cmd-input" type="text" placeholder="Cerca comandante su Scryfall..." autocomplete="off" />
+              <button id="btn-change-cmd-search" type="button" class="btn primary small">Cerca</button>
+            </div>
+            <p id="change-cmd-status" class="status"></p>
+            <div id="change-cmd-results" class="deck-search-grid"></div>
+            <button id="btn-close-cmd-modal" type="button" class="btn" style="margin-top:10px;">Chiudi</button>
+          </div>
+        </div>
+
+        <!-- MODAL: DETTAGLIO CARTA (INFO, EDIZIONE, PROXY, TAG) -->
         <div id="card-preview-modal" class="proposal-overlay hidden">
-          <div class="proposal-card card-preview-box">
-            <img id="card-preview-img" src="" alt="Carta" class="card-preview-img" />
-            <h3 id="card-preview-name"></h3>
-            <p id="card-preview-meta" class="muted"></p>
+          <div class="proposal-card card-detail-modal">
+            <div class="card-detail-top">
+              <div class="card-detail-img-wrap">
+                <img id="card-preview-img" src="" alt="Carta" class="card-preview-img" />
+                <span id="card-preview-proxy-badge" class="proxy-overlay-badge hidden">PROXY</span>
+              </div>
+              <div class="card-detail-head">
+                <h3 id="card-preview-name"></h3>
+                <div id="card-preview-mana" class="deck-card-mana"></div>
+                <p id="card-preview-meta" class="muted card-detail-type"></p>
+                <div class="card-detail-price-row">
+                  <span id="card-preview-price" class="card-price-pill">—</span>
+                  <div id="card-preview-qty-wrap" class="deck-qty-controls">
+                    <button type="button" id="btn-detail-qty-minus" class="deck-qty-btn">−</button>
+                    <span id="detail-qty-num" class="deck-qty-num">1</span>
+                    <button type="button" id="btn-detail-qty-plus" class="deck-qty-btn">+</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div id="card-preview-oracle" class="card-oracle-box"></div>
+
+            <!-- CAMBIO ESPANSIONE -->
+            <div class="card-detail-section">
+              <label for="card-edition-select">Espansione / Stampa</label>
+              <select id="card-edition-select">
+                <option value="">Caricamento edizioni...</option>
+              </select>
+            </div>
+
+            <!-- PROXY TOGGLE -->
+            <label class="card-proxy-toggle">
+              <input id="card-proxy-chk" type="checkbox" />
+              <span>Segna questa carta come <strong>Proxy</strong></span>
+            </label>
+
+            <!-- GESTIONE TAG (CONDIVISI CON DESKTOP) -->
+            <div class="card-detail-section">
+              <label>Tag della carta</label>
+              <div id="card-tags-chips" class="tags-chips-wrap"></div>
+              <div class="deck-search-row" style="margin-top:6px;">
+                <input id="card-tag-input" type="text" placeholder="Nuovo tag (es. Ramp, Removal)..." autocomplete="off" />
+                <button id="btn-add-card-tag" type="button" class="btn primary small">+</button>
+              </div>
+              <div id="card-tag-suggestions" class="tags-suggestions-wrap"></div>
+            </div>
+
+            <p id="card-detail-status" class="status"></p>
             <button id="btn-close-card-preview" type="button" class="btn primary">Chiudi</button>
           </div>
         </div>
@@ -320,6 +442,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="app.js?v=9"></script>
+  <script src="app.js?v=10"></script>
 </body>
 </html>
