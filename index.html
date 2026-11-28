@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>ManaStat Companion</title>
   <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="style.css?v=16" />
+  <link rel="stylesheet" href="style.css?v=17" />
 </head>
 <body>
   <div id="app">
@@ -460,56 +460,69 @@
       <!-- TAB: COLLECTION -->
       <section id="tab-my-collection" class="tab-panel">
         <div class="card">
-          <div class="decks-list-header">
-            <h2>My Collection</h2>
-            <div class="col-header-actions">
-              <button id="btn-open-col-import" type="button" class="deck-import-open-btn">Import</button>
-              <button id="btn-open-col-add" type="button" class="btn-circle-plus" title="Add Card">+</button>
+       
+          <!-- PARTE ALTA: visibile solo nella lista espansioni -->
+          <div id="col-overview-top">
+            <div class="decks-list-header">
+              <h2>My Collection</h2>
+              <div class="col-header-actions">
+                <button id="btn-open-col-import" type="button" class="deck-import-open-btn">Import</button>
+                <button id="btn-open-col-add" type="button" class="btn-circle-plus" title="Add Card">+</button>
+              </div>
+            </div>
+
+            <!-- COLLECTION KPI BAR -->
+            <div class="col-kpi-grid">
+              <div class="col-kpi-box">
+                <div class="col-kpi-label">Cards</div>
+                <div id="col-kpi-total" class="col-kpi-val">0</div>
+                <div id="col-kpi-unique" class="col-kpi-sub">0 unique</div>
+              </div>
+              <div class="col-kpi-box">
+                <div class="col-kpi-label">Value</div>
+                <div id="col-kpi-value" class="col-kpi-val green">€ 0.00</div>
+                <div id="col-kpi-foil" class="col-kpi-sub">0 foil</div>
+              </div>
+              <div class="col-kpi-box">
+                <div class="col-kpi-label">Sets</div>
+                <div id="col-kpi-sets" class="col-kpi-val">0</div>
+                <div class="col-kpi-sub">expansions</div>
+              </div>
+            </div>
+
+            <!-- SEARCH & FILTERS -->
+            <div class="deck-search-row" style="margin-top:8px;">
+              <input
+                id="col-search-input"
+                type="text"
+                placeholder="Search name, set, #number..."
+                autocomplete="off"
+              />
+              <button id="btn-col-toggle-filters" type="button" class="btn small">Filters</button>
             </div>
           </div>
 
-          <!-- COLLECTION KPI BAR -->
-          <div class="col-kpi-grid">
-            <div class="col-kpi-box">
-              <div class="col-kpi-label">Cards</div>
-              <div id="col-kpi-total" class="col-kpi-val">0</div>
-              <div id="col-kpi-unique" class="col-kpi-sub">0 unique</div>
-            </div>
-            <div class="col-kpi-box">
-              <div class="col-kpi-label">Value</div>
-              <div id="col-kpi-value" class="col-kpi-val green">€ 0.00</div>
-              <div id="col-kpi-foil" class="col-kpi-sub">0 foil</div>
-            </div>
-            <div class="col-kpi-box">
-              <div class="col-kpi-label">Sets</div>
-              <div id="col-kpi-sets" class="col-kpi-val">0</div>
-              <div class="col-kpi-sub">expansions</div>
-            </div>
-          </div>
-
-          <!-- SEARCH & VIEW CONTROLS -->
-          <div class="deck-search-row" style="margin-top:8px;">
-            <input
-              id="col-search-input"
-              type="text"
-              placeholder="Search name, set, #number..."
-              autocomplete="off"
-            />
-            <button id="btn-col-toggle-filters" type="button" class="btn small">Filters</button>
-          </div>
-
-         
-          <!-- COLLAPSIBLE EXTRA FILTERS -->
+          <!-- COLLAPSIBLE FILTERS PANEL -->
           <div id="col-filters-panel" class="col-filters-panel hidden">
             <div class="row-2">
               <div>
-                <label for="col-filter-set" style="margin-top:4px;">Set</label>
-                <select id="col-filter-set">
-                  <option value="ALL">All Sets</option>
-                </select>
+                <label for="col-filter-number" style="margin-top:4px;">Collector #</label>
+                <input id="col-filter-number" type="text" placeholder="e.g. 142" autocomplete="off" />
               </div>
               <div>
-                <label for="col-filter-rarity" style="margin-top:4px;">Rarity</label>
+                <label for="col-filter-price" style="margin-top:4px;">Price</label>
+                <select id="col-filter-price">
+                  <option value="ALL">All Prices</option>
+                  <option value="lt1">&lt; € 1</option>
+                  <option value="1to5">€ 1 – € 5</option>
+                  <option value="5to20">€ 5 – € 20</option>
+                  <option value="gt20">&gt; € 20</option>
+                </select>
+              </div>
+            </div>
+            <div class="row-2">
+              <div>
+                <label for="col-filter-rarity" style="margin-top:6px;">Rarity</label>
                 <select id="col-filter-rarity">
                   <option value="ALL">All Rarities</option>
                   <option value="mythic">Mythic</option>
@@ -518,14 +531,33 @@
                   <option value="common">Common</option>
                 </select>
               </div>
+              <div>
+                <label for="col-filter-color" style="margin-top:6px;">Color</label>
+                <select id="col-filter-color">
+                  <option value="ALL">All Colors</option>
+                  <option value="W">White</option>
+                  <option value="U">Blue</option>
+                  <option value="B">Black</option>
+                  <option value="R">Red</option>
+                  <option value="G">Green</option>
+                  <option value="C">Colorless</option>
+                  <option value="M">Multicolor</option>
+                </select>
+              </div>
             </div>
             <div class="row-2">
               <div>
-                <label for="col-filter-finish" style="margin-top:6px;">Finish</label>
-                <select id="col-filter-finish">
-                  <option value="ALL">All Finishes</option>
-                  <option value="nonfoil">Non-Foil</option>
-                  <option value="foil">Foil</option>
+                <label for="col-filter-type" style="margin-top:6px;">Type</label>
+                <select id="col-filter-type">
+                  <option value="ALL">All Types</option>
+                  <option value="creature">Creature</option>
+                  <option value="instant">Instant</option>
+                  <option value="sorcery">Sorcery</option>
+                  <option value="artifact">Artifact</option>
+                  <option value="enchantment">Enchantment</option>
+                  <option value="planeswalker">Planeswalker</option>
+                  <option value="land">Land</option>
+                  <option value="battle">Battle</option>
                 </select>
               </div>
               <div>
@@ -547,15 +579,19 @@
           <!-- TOOLBAR: VIEW MODE + COUNT -->
           <div class="col-toolbar-row">
             <span id="col-shown-count" class="muted" style="font-size:12px;">0 cards</span>
-            <div class="seg-control">
-              <button type="button" id="btn-col-view-list" class="seg-btn active">List</button>
-              <button type="button" id="btn-col-view-grid" class="seg-btn">Grid</button>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <button id="btn-col-set-filters" type="button" class="btn small hidden" style="padding:5px 10px;">Filters</button>
+              <div class="seg-control">
+                <button type="button" id="btn-col-view-list" class="seg-btn active">List</button>
+                <button type="button" id="btn-col-view-grid" class="seg-btn">Grid</button>
+              </div>
             </div>
           </div>
 
           <p id="col-page-status" class="status"></p>
           <div id="col-cards-container" class="col-cards-container"></div>
         </div>
+        
 
         <!-- MODAL: ADD CARD TO COLLECTION -->
         <div id="col-add-modal" class="proposal-overlay hidden">
