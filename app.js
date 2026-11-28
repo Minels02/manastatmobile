@@ -14,13 +14,14 @@ let groupDecks = [];
 const artworkCache = new Map();
 const cardPriceCache = new Map();
 
-// Configurazione Server Scanner
+// Scanner Server Configuration
 const SCANNER_HTTP_BASE = "https://manastat-scanner-server.onrender.com";
 const DEFAULT_SCANNER_WS_URL = "wss://manastat-scanner-server.onrender.com/ws/scan";
 const STORAGE_SETS_KEY = "manastat_scanner_selected_sets";
+const STORAGE_SCAN_QUEUE_KEY = "manastat_scanner_queue_v1";
 
-// Badge versione sempre visibile sopra la barra di navigazione
-const APP_UI_VERSION = "v3.9";
+// Version badge always visible above the bottom navigation bar
+const APP_UI_VERSION = "v4.0";
 let connectedServerVersion = "";
 
 function renderVersionBadge() {
@@ -30,7 +31,7 @@ function renderVersionBadge() {
     badge = document.createElement("div");
     badge.id = "manastat-version-badge";
     badge.style.cssText =
-      "position:fixed;bottom:62px;right:8px;z-index:40;pointer-events:none;" +
+      "position:fixed;bottom:66px;right:8px;z-index:40;pointer-events:none;" +
       "background:rgba(15,23,42,0.75);color:#94a3b8;border:1px solid rgba(148,163,184,0.22);" +
       "border-radius:6px;padding:2px 6px;font-size:10px;font-family:monospace;";
     document.body.appendChild(badge);
@@ -60,7 +61,7 @@ let unlockFramesCounter = 0;
 let scanPauseUntil = 0;
 const rejectedCardKeys = new Set();
 
-// Stato filtro espansioni scanner
+// Scanner set filter state
 let availableScannerSets = [];
 let setsLoaded = false;
 let setSelectorBound = false;
@@ -103,6 +104,7 @@ function normalizeTag(raw) {
   const s = String(raw || "").trim().replace(/\s+/g, "-").replace(/^#+/, "").trim();
   return s ? `#${s.toLowerCase()}` : "";
 }
+
 function extractManaCostFromScryfall(sc) {
   const direct = String(sc?.mana_cost || "").trim();
   if (direct) return direct;
@@ -155,7 +157,7 @@ function resolveCardColorIdentity(card) {
   return order.filter((c) => found.has(c));
 }
 
-// ---- CHANGELOG COMPATIBILE CON APP DESKTOP (decks.changelog_json) ----
+// ---- CHANGELOG COMPATIBLE WITH DESKTOP APP (decks.changelog_json) ----
 function parseChangeToken(token) {
   const s = String(token || "").trim();
   const m = s.match(/^(\d+)\s*x?\s+(.+)$/i);
@@ -230,7 +232,7 @@ function applyCardDeltaToChangelog(changelog, hist, cardName, oldQty, newQty) {
       const origQty = parseChangeToken(removed[remIdx]).qty;
       removed.splice(remIdx, 1);
       if (newQty === origQty) {
-        // Annullata (netto zero)
+        // Net zero
       } else if (newQty <= 0) {
         removed.push(formatCardQtyToken(cleanName, origQty));
       } else {
@@ -250,7 +252,7 @@ function applyCardDeltaToChangelog(changelog, hist, cardName, oldQty, newQty) {
       if (chgIdx >= 0) {
         changed.splice(chgIdx, 1);
         if (newQty === origQty) {
-          // Annullata (netto zero)
+          // Net zero
         } else if (newQty <= 0) {
           removed.push(formatCardQtyToken(cleanName, origQty));
         } else if (origQty <= 0) {
@@ -272,6 +274,7 @@ function applyCardDeltaToChangelog(changelog, hist, cardName, oldQty, newQty) {
   }
   return logs;
 }
+
 function setStatus(el, msg, type = "") {
   if (!el) return;
   el.textContent = msg;
@@ -329,13 +332,13 @@ function setScannerConnectionUi(label, stateClass, isRunning) {
   }
   const btn = $("btnToggleScanner");
   if (btn) {
-    btn.textContent = isRunning ? "Ferma" : "Avvia";
+    btn.textContent = isRunning ? "Stop" : "Start";
   }
 }
 
 function updateRejectedBadge() {
   if ($("rejected-count-badge")) {
-    $("rejected-count-badge").textContent = `Scartate: ${rejectedCardKeys.size}`;
+    $("rejected-count-badge").textContent = `Rejected: ${rejectedCardKeys.size}`;
   }
 }
 
@@ -345,12 +348,12 @@ function setScanStateBadge(text) {
   }
 }
 
-// ---- SELETTORE ESPANSIONI SCANNER ----
+// ---- SCANNER SET FILTER ----
 function saveSelectedSetsToStorage() {
   try {
     localStorage.setItem(STORAGE_SETS_KEY, JSON.stringify(Array.from(selectedScannerSets)));
   } catch {
-    // ignora
+    // ignore
   }
 }
 
@@ -364,7 +367,7 @@ function sendSetFilterToWs() {
       })
     );
   } catch {
-    // ignora
+    // ignore
   }
 }
 
@@ -372,11 +375,11 @@ function updateSetFilterSummary() {
   const lbl = $("scanner-sets-summary");
   if (!lbl) return;
   if (selectedScannerSets.size === 0) {
-    lbl.textContent = "Tutte";
+    lbl.textContent = "All";
   } else if (selectedScannerSets.size <= 3) {
     lbl.textContent = Array.from(selectedScannerSets).join(", ");
   } else {
-    lbl.textContent = `${selectedScannerSets.size} selezionate`;
+    lbl.textContent = `${selectedScannerSets.size} selected`;
   }
 }
 
@@ -386,7 +389,7 @@ function renderScannerSetsList() {
   const q = ($("scanner-sets-search")?.value || "").trim().toLowerCase();
 
   if (!setsLoaded) {
-    listEl.innerHTML = `<div class="scanner-sets-empty">Caricamento espansioni...</div>`;
+    listEl.innerHTML = `<div class="scanner-sets-empty">Loading sets...</div>`;
     return;
   }
 
@@ -396,7 +399,7 @@ function renderScannerSetsList() {
   });
 
   if (!filtered.length) {
-    listEl.innerHTML = `<div class="scanner-sets-empty">Nessuna espansione trovata.</div>`;
+    listEl.innerHTML = `<div class="scanner-sets-empty">No sets found.</div>`;
     return;
   }
 
@@ -478,11 +481,11 @@ async function loadAvailableScannerSets() {
       renderScannerSetsList();
     }
   } catch {
-    // ritenterà alla prossima apertura
+    // will retry on next open
   }
 }
 
-// Navigazione tab in basso
+// Bottom tab navigation
 document.querySelectorAll(".nav-btn").forEach((btn) => {
   btn.addEventListener("click", async () => {
     document.querySelectorAll(".nav-btn").forEach((b) => b.classList.remove("active"));
@@ -495,6 +498,7 @@ document.querySelectorAll(".nav-btn").forEach((btn) => {
       document.body.classList.add("scanner-mode");
       bindSetSelectorUi();
       loadAvailableScannerSets();
+      if (typeof updateScanQueueBadge === "function") updateScanQueueBadge();
       await ensureCameraAndWs();
     } else {
       document.body.classList.remove("scanner-mode");
@@ -503,6 +507,8 @@ document.querySelectorAll(".nav-btn").forEach((btn) => {
         await loadUserCollection();
       } else if (targetTab === "tab-profile" && typeof loadProfile === "function") {
         await loadProfile();
+      } else if (targetTab === "tab-search" && typeof initSearchTab === "function") {
+        await initSearchTab();
       }
     }
   });
@@ -512,7 +518,7 @@ document.querySelectorAll(".nav-btn").forEach((btn) => {
 $("btn-login")?.addEventListener("click", async () => {
   const email = ($("email")?.value || "").trim();
   const password = $("password")?.value || "";
-  setStatus($("login-status"), "Accesso in corso...");
+  setStatus($("login-status"), "Signing in...");
 
   const { data, error } = await sb.auth.signInWithPassword({ email, password });
   if (error) {
@@ -543,8 +549,10 @@ async function onAuthenticated() {
   const tasks = [loadDecks(), loadGroups()];
   if (typeof loadUserCollection === "function") tasks.push(loadUserCollection());
   if (typeof loadProfile === "function") tasks.push(loadProfile());
+  if (typeof updateScanQueueBadge === "function") updateScanQueueBadge();
   await Promise.all(tasks);
 }
+
 function formatSortKey(deck) {
   const fmt = String(deck.format || deck.type || "").trim();
   if (!fmt) return [2, 999, String(deck.name || "").toLowerCase()];
@@ -638,7 +646,7 @@ async function resolveDeckArtwork(deck) {
 // ---- CREATE NEW DECK (COMMANDER + PARTNER) ----
 let newDeckSelectedCmd = null;
 let newDeckSelectedPartner = null;
-let newDeckActiveCmdSlot = 1; // 1 = Commander, 2 = Partner
+let newDeckActiveCmdSlot = 1;
 let newDeckCmdResults = [];
 let newDeckCmdTimer = null;
 
@@ -996,7 +1004,7 @@ function renderDecksList() {
   renderDecksFormatFilter();
   const container = $("decks-list-container");
   if (!myDecks.length) {
-    container.innerHTML = `<p class="muted">No decks found on your account. Tap + at the top right to create one.</p>`;
+    container.innerHTML = `<p class="muted">No decks found on your account. Tap + at the bottom left to create one.</p>`;
     return;
   }
 
@@ -1072,9 +1080,9 @@ function applyDeckHeroBg(bgUrl) {
 let currentDeckHistory = [];
 let currentDeckCards = [];
 let currentDeckChangelog = [];
-let deckGroupMode = "type"; // "type" | "tag"
-let deckViewMode = "list";  // "list" | "grid"
-let deckSortMode = "alpha"; // "alpha" | "cmc" | "price"
+let deckGroupMode = "type";
+let deckViewMode = "list";
+let deckSortMode = "alpha";
 
 document.querySelectorAll(".deck-subtab-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
@@ -1263,13 +1271,13 @@ function renderWinLossPie(wins, losses) {
 let trendChartPoints = [];
 let selectedTrendIdx = -1;
 
-function formatShortDateIt(ymd) {
+function formatShortDate(ymd) {
   const parts = String(ymd || "").slice(0, 10).split("-");
   if (parts.length !== 3) return ymd;
   return `${parts[2]}/${parts[1]}`;
 }
 
-function formatFullDateIt(ymd) {
+function formatFullDate(ymd) {
   const parts = String(ymd || "").slice(0, 10).split("-");
   if (parts.length !== 3) return ymd;
   return `${parts[2]}/${parts[1]}/${parts[0]}`;
@@ -1284,7 +1292,7 @@ function updateTrendDetailBar(idx) {
     return;
   }
   bar.innerHTML = `
-    <span><strong>${escapeHtml(formatFullDateIt(p.day))}</strong> · ${p.dayW}W/${p.dayM}M</span>
+    <span><strong>${escapeHtml(formatFullDate(p.day))}</strong> · ${p.dayW}W/${p.dayM}M</span>
     <span class="trend-detail-wr">Total: ${p.cumW}W/${p.cumM}M (${Math.round(p.wr)}%)</span>
   `;
 }
@@ -1391,7 +1399,7 @@ function renderWinrateTrendSvg(autoScrollToEnd = false) {
       if (!isEdge && c.x - lastLabelX < 44) return "";
       if (isEdge && i === coords.length - 1 && c.x - lastLabelX < 32) return "";
       lastLabelX = c.x;
-      return `<text x="${c.x.toFixed(1)}" y="${H - 5}" text-anchor="middle" fill="#94a3b8" font-size="9">${escapeHtml(formatShortDateIt(c.day))}</text>`;
+      return `<text x="${c.x.toFixed(1)}" y="${H - 5}" text-anchor="middle" fill="#94a3b8" font-size="9">${escapeHtml(formatShortDate(c.day))}</text>`;
     })
     .join("");
 
@@ -1462,7 +1470,7 @@ function renderDeckHistoryList() {
       const m = Math.max(0, Number(r.match || 0));
       const w = Math.max(0, Math.min(Number(r.win || 0), m));
       const wr = m > 0 ? Math.round((w / m) * 100) : 0;
-      const dateStr = formatFullDateIt(String(r.played_on || "").slice(0, 10));
+      const dateStr = formatFullDate(String(r.played_on || "").slice(0, 10));
       return `
         <div class="history-row">
           <div>
@@ -2129,7 +2137,6 @@ window.changeDeckCardQty = async function (cardIdx, delta) {
     return;
   }
 
-  // In-place update (no page flash)
   card.quantity = newQty;
   document.querySelectorAll(`[data-card-qty-idx="${cardIdx}"]`).forEach((el) => {
     el.textContent = String(newQty);
@@ -3183,6 +3190,7 @@ $("btn-run-import-deck")?.addEventListener("click", async () => {
     if (btnRun) btnRun.disabled = false;
   }
 });
+
 // ---- GROUPS PAGE (DESKTOP PARITY) ----
 let groupInvitations = [];
 let groupMatchesData = { matches: [], players: [] };
@@ -3190,7 +3198,6 @@ let groupPlayerLb = [];
 let groupDeckLb = [];
 let groupProfilesMap = {};
 
-// Sub-tab switch inside Group Detail
 document.querySelectorAll(".group-subtab-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
     const targetId = btn.dataset.gsubtab;
@@ -3317,7 +3324,7 @@ async function loadGroups() {
   if (!groupIds.length) {
     myGroups = [];
     setStatus($("group-list-status"), "");
-    $("groups-list-container").innerHTML = `<p class="muted">You are not part of any group yet. Tap + at the top right to create one.</p>`;
+    $("groups-list-container").innerHTML = `<p class="muted">You are not part of any group yet. Tap + at the bottom left to create one.</p>`;
     return;
   }
 
@@ -3381,7 +3388,7 @@ function renderGroupsList() {
       const roleHtml = `<span class="group-role-pill ${isOwner ? "owner" : ""}">${isOwner ? "Owner" : "Member"}</span>`;
       const memTxt = g.members_count === 1 ? "1 member" : `${g.members_count} members`;
       const matTxt = g.matches_count === 1 ? "1 match" : `${g.matches_count} matches`;
-      const lastTxt = g.last_match ? ` · Last: ${formatFullDateIt(g.last_match)}` : "";
+      const lastTxt = g.last_match ? ` · Last: ${formatFullDate(g.last_match)}` : "";
       return `
         <div class="group-card" onclick="openGroupDetail('${escapeHtml(g.id)}')">
           <div style="min-width:0;">
@@ -3496,7 +3503,6 @@ $("btn-leave-group")?.addEventListener("click", async () => {
   const targetId = selectedGroupId;
   const { error: rpcErr } = await sb.rpc("leave_group_safe", { p_group_id: targetId });
   if (rpcErr) {
-    // Fallback if RPC is unavailable
     await sb.from("group_members").delete().eq("group_id", targetId).eq("user_id", currentUser.id);
     if (isLastMember) {
       await sb.from("groups").delete().eq("id", targetId);
@@ -3540,7 +3546,6 @@ async function loadGroupDetails(groupId) {
   groupDecks = decks || [];
   groupMatchesData = { matches: matchRows, players: matchPlayers };
 
-  // Collect all user IDs (current members + past players in history)
   const allUserIds = Array.from(
     new Set([
       ...(members || []).map((m) => m.user_id),
@@ -3575,7 +3580,6 @@ async function loadGroupDetails(groupId) {
     avatar_url: groupProfilesMap[uid]?.avatar_url || "",
   }));
 
-  // Player Leaderboard (RPC or fallback from match_players)
   if (!playerLbRes.error && Array.isArray(playerLbRes.data)) {
     groupPlayerLb = playerLbRes.data.map((r) => {
       const games = Number(r.games || 0);
@@ -3600,7 +3604,6 @@ async function loadGroupDetails(groupId) {
       .sort((a, b) => b.winrate - a.winrate || b.wins - a.wins);
   }
 
-  // Deck Leaderboard (RPC or fallback from match_players)
   if (!deckLbRes.error && Array.isArray(deckLbRes.data)) {
     groupDeckLb = deckLbRes.data.map((r) => {
       const games = Number(r.games || 0);
@@ -3648,7 +3651,6 @@ async function loadGroupDetails(groupId) {
 }
 
 function renderGroupLeaderboards() {
-  // Players
   const pBox = $("group-player-lb");
   if (!groupPlayerLb.length) {
     pBox.innerHTML = `<p class="muted">No matches logged yet.</p>`;
@@ -3673,7 +3675,6 @@ function renderGroupLeaderboards() {
       .join("");
   }
 
-  // Decks
   const dBox = $("group-deck-lb");
   if (!groupDeckLb.length) {
     dBox.innerHTML = `<p class="muted">No deck stats yet.</p>`;
@@ -3717,7 +3718,6 @@ function renderGroupMatchesHistory() {
     playersByMatch.get(p.match_id).push(p);
   }
 
-  // Group matches by day
   const byDay = new Map();
   for (const m of matches) {
     const day = String(m.played_on || m.created_at || "").slice(0, 10) || "Unknown";
@@ -3727,7 +3727,7 @@ function renderGroupMatchesHistory() {
 
   box.innerHTML = Array.from(byDay.entries())
     .map(([day, list]) => {
-      const dayLabel = day === "Unknown" ? day : formatFullDateIt(day);
+      const dayLabel = day === "Unknown" ? day : formatFullDate(day);
       const countLbl = list.length === 1 ? "1 match" : `${list.length} matches`;
       const cardsHtml = list
         .map((m) => {
@@ -3777,7 +3777,6 @@ window.deleteGroupMatch = async function (matchId) {
   await loadGroupDetails(selectedGroupId);
 };
 
-// ---- LOG NEW MATCH ----
 function getActiveDecksForMember(userId) {
   const active = groupDecks.filter((d) => !d.archived_at);
   const owned = active.filter((d) => {
@@ -3885,9 +3884,7 @@ $("btn-save-group-match")?.addEventListener("click", async () => {
   switchGroupSubtab("group-sub-stats");
 });
 
-// ---- GROUP DECKS MANAGEMENT ----
 function renderGroupDecksSection() {
-  // Populate personal decks selector
   const sel = $("group-import-personal-deck");
   if (sel) {
     sel.innerHTML =
@@ -3904,7 +3901,6 @@ function renderGroupDecksSection() {
     return;
   }
 
-  // Group by owner (current user first)
   const byOwner = new Map();
   for (const d of activeDecks) {
     const oid = String(d.owner_id || d.user_id || "shared");
@@ -3954,7 +3950,6 @@ async function addDeckToGroup(deckName, personalDeckId = null) {
 
   setStatus($("group-decks-status"), "Adding deck...");
 
-  // Check if user already has an archived deck with the same name -> restore it
   const archived = groupDecks.find(
     (d) =>
       d.archived_at &&
@@ -4046,7 +4041,6 @@ window.removeGroupDeck = async function (groupDeckId) {
   await loadGroupDetails(selectedGroupId);
 };
 
-// ---- GROUP MEMBERS & INVITATIONS ----
 function renderGroupMembersSection() {
   const listEl = $("group-members-list");
   const grp = myGroups.find((g) => String(g.id) === String(selectedGroupId));
@@ -4139,7 +4133,6 @@ $("btn-send-group-invite")?.addEventListener("click", async () => {
     return;
   }
 
-  // Send invitation via group_invitations
   const { error: invErr } = await sb.from("group_invitations").upsert(
     {
       group_id: selectedGroupId,
@@ -4159,14 +4152,489 @@ $("btn-send-group-invite")?.addEventListener("click", async () => {
   setStatus($("group-members-status"), "Invitation sent!", "ok");
 });
 
-// ---- MY COLLECTION PAGE (DESKTOP PARITY) ----
+// ---- SEARCH PAGE (INSTAGRAM-STYLE PLAYERS & PUBLIC DECKS) ----
+let searchMode = "players"; // "players" | "decks"
+let globalSearchTimer = null;
+let lastSearchDecks = [];
+let publicProfileShowcase = [];
+let publicProfileWishlist = [];
+let publicProfileCardsTab = "showcase";
+let publicDeckReturnTarget = "search"; // "search" | "profile"
+
+async function fetchWishlistForUser(uid, profileRow) {
+  if (Array.isArray(profileRow?.wishlist) && profileRow.wishlist.length > 0) {
+    return profileRow.wishlist.filter((c) => c && (c.name || c.image_url || c.card_image_url));
+  }
+  try {
+    const { data, error } = await sb
+      .from("user_wishlist")
+      .select("*")
+      .eq("user_id", uid)
+      .order("name", { ascending: true });
+    if (!error && Array.isArray(data)) {
+      return data.filter((c) => c && (c.name || c.image_url || c.card_image_url));
+    }
+  } catch {
+    // ignore if table does not exist
+  }
+  return [];
+}
+
+function renderCardGridInto(el, cards, emptyMsg) {
+  if (!el) return;
+  if (!cards || !cards.length) {
+    el.innerHTML = `<p class="muted" style="grid-column:1 / -1;margin:4px 0;">${escapeHtml(emptyMsg)}</p>`;
+    return;
+  }
+  el.innerHTML = cards
+    .map((c) => {
+      const img = c.card_image_url || c.image_url || "";
+      const isFoil = Boolean(c.foil);
+      const setInfo = [
+        (c.set_code || c.set || "").toUpperCase(),
+        c.collector_number ? `#${c.collector_number}` : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+      return `
+        <div class="flex-card-slot ${isFoil ? "is-foil" : ""}">
+          <div class="flex-card-img-wrap">
+            ${isFoil ? `<span class="flex-foil-badge">✨ Foil</span>` : ""}
+            ${img ? `<img src="${escapeHtml(img)}" alt="${escapeHtml(c.name || "Card")}" loading="lazy" />` : ""}
+          </div>
+          <div class="flex-card-name">${escapeHtml(c.name || "Card")}</div>
+          ${setInfo ? `<div class="flex-card-set">${escapeHtml(setInfo)}</div>` : ""}
+        </div>
+      `;
+    })
+    .join("");
+}
+
+async function initSearchTab() {
+  $("public-profile-view")?.classList.add("hidden");
+  $("public-deck-view")?.classList.add("hidden");
+  $("search-main-view")?.classList.remove("hidden");
+  await runGlobalSearch();
+}
+
+$("btn-search-tab-players")?.addEventListener("click", () => {
+  searchMode = "players";
+  $("btn-search-tab-players").classList.add("active");
+  $("btn-search-tab-decks").classList.remove("active");
+  runGlobalSearch();
+});
+
+$("btn-search-tab-decks")?.addEventListener("click", () => {
+  searchMode = "decks";
+  $("btn-search-tab-decks").classList.add("active");
+  $("btn-search-tab-players").classList.remove("active");
+  runGlobalSearch();
+});
+
+$("global-search-input")?.addEventListener("input", () => {
+  clearTimeout(globalSearchTimer);
+  globalSearchTimer = setTimeout(runGlobalSearch, 280);
+});
+
+async function runGlobalSearch() {
+  if (!currentUser) return;
+  const q = ($("global-search-input")?.value || "").trim();
+  const listEl = $("global-search-results");
+  if (!listEl) return;
+
+  setStatus($("global-search-status"), "Searching...");
+
+  if (searchMode === "players") {
+    let query = sb
+      .from("profiles")
+      .select("id, nickname, bio, avatar_url")
+      .order("nickname", { ascending: true })
+      .limit(30);
+    if (q) {
+      query = query.ilike("nickname", `%${q}%`);
+    }
+    const { data, error } = await query;
+    if (error) {
+      setStatus($("global-search-status"), error.message, "err");
+      return;
+    }
+    const rows = (data || []).filter((p) => (p.nickname || "").trim() !== "");
+    setStatus($("global-search-status"), "");
+    if (!rows.length) {
+      listEl.innerHTML = `<p class="muted">No players found.</p>`;
+      return;
+    }
+    listEl.innerHTML = rows
+      .map((p) => {
+        const nick = (p.nickname || "Player").trim();
+        const bio = (p.bio || "").trim();
+        const av = (p.avatar_url || "").trim();
+        const avHtml = av
+          ? `<img src="${escapeHtml(av)}" alt="${escapeHtml(nick)}" loading="lazy" />`
+          : escapeHtml(nick.slice(0, 1).toUpperCase());
+        return `
+          <div class="search-player-row" onclick="openPublicProfile('${escapeHtml(p.id)}')">
+            <div class="search-player-avatar">${avHtml}</div>
+            <div class="search-player-info">
+              <div class="search-player-name">${escapeHtml(nick)}</div>
+              <div class="search-player-bio">${bio ? escapeHtml(bio) : "Tap to view profile"}</div>
+            </div>
+            <div class="deck-banner-arrow">›</div>
+          </div>
+        `;
+      })
+      .join("");
+    return;
+  }
+
+  // Public decks search
+  let deckQuery = sb
+    .from("decks")
+    .select("*")
+    .eq("is_public", true)
+    .order("name", { ascending: true })
+    .limit(40);
+  if (q) {
+    deckQuery = deckQuery.ilike("name", `%${q}%`);
+  }
+  const { data: decksData, error: dErr } = await deckQuery;
+  if (dErr) {
+    setStatus($("global-search-status"), dErr.message, "err");
+    return;
+  }
+  lastSearchDecks = decksData || [];
+  setStatus($("global-search-status"), "");
+  if (!lastSearchDecks.length) {
+    listEl.innerHTML = `<p class="muted">No public decks found.</p>`;
+    return;
+  }
+
+  const ownerIds = Array.from(new Set(lastSearchDecks.map((d) => d.owner_id).filter(Boolean)));
+  let ownerMap = {};
+  if (ownerIds.length) {
+    const { data: profs } = await sb.from("profiles").select("id, nickname").in("id", ownerIds);
+    ownerMap = Object.fromEntries((profs || []).map((p) => [p.id, p.nickname || "Player"]));
+  }
+
+  listEl.innerHTML = lastSearchDecks
+    .map((d) => {
+      const bg = extractDeckImageUrl(d) || d._resolvedArtUrl || "";
+      const bgStyle = bg ? `style="background-image: url('${escapeHtml(bg)}');"` : "";
+      const fmtText = getDeckFormatLabel(d);
+      const ownerName = ownerMap[d.owner_id] || "Player";
+      return `
+        <button type="button" class="deck-banner-card" data-pub-deck-id="${escapeHtml(d.id)}" ${bgStyle} onclick="openPublicDeck('${escapeHtml(d.id)}', 'search', '${escapeHtml(ownerName)}')">
+          <div class="deck-banner-content">
+            <div>
+              <div class="deck-banner-title">${escapeHtml(d.name || "Untitled")}</div>
+              <div class="deck-banner-sub">${escapeHtml(fmtText)} · by ${escapeHtml(ownerName)}</div>
+            </div>
+            <div class="deck-banner-arrow">›</div>
+          </div>
+        </button>
+      `;
+    })
+    .join("");
+
+  for (const d of lastSearchDecks) {
+    if (!extractDeckImageUrl(d)) {
+      resolveDeckArtwork(d).then((artUrl) => {
+        if (artUrl) {
+          d._resolvedArtUrl = artUrl;
+          const el = document.querySelector(`[data-pub-deck-id="${d.id}"]`);
+          if (el) el.style.backgroundImage = `url("${artUrl}")`;
+        }
+      });
+    }
+  }
+}
+
+window.openPublicProfile = async function (targetUid) {
+  if (!targetUid) return;
+  $("search-main-view")?.classList.add("hidden");
+  $("public-deck-view")?.classList.add("hidden");
+  $("public-profile-view")?.classList.remove("hidden");
+
+  $("pub-profile-nickname").textContent = "Loading...";
+  $("pub-profile-bio").textContent = "";
+  $("pub-profile-since").textContent = "";
+  $("pub-profile-decks-list").innerHTML = `<p class="muted">Loading public decks...</p>`;
+  $("pub-profile-cards-grid").innerHTML = "";
+
+  let profile = null;
+  const pRes = await sb
+    .from("profiles")
+    .select("id, nickname, bio, avatar_url, favorite_cards, wishlist, created_at")
+    .eq("id", targetUid)
+    .maybeSingle();
+
+  if (pRes.error) {
+    const fb = await sb
+      .from("profiles")
+      .select("id, nickname, bio, avatar_url, favorite_cards, created_at")
+      .eq("id", targetUid)
+      .maybeSingle();
+    profile = fb.data || {};
+  } else {
+    profile = pRes.data || {};
+  }
+
+  const [pubDecksRes, mpRes, wishlistCards] = await Promise.all([
+    sb.from("decks").select("*").eq("owner_id", targetUid).eq("is_public", true).order("name", { ascending: true }),
+    sb.from("match_players").select("is_winner").eq("user_id", targetUid),
+    fetchWishlistForUser(targetUid, profile),
+  ]);
+
+  const pubDecks = pubDecksRes.data || [];
+  lastSearchDecks = pubDecks;
+  const deckIds = pubDecks.map((d) => d.id).filter(Boolean);
+
+  let histRows = [];
+  if (deckIds.length) {
+    const hRes = await sb.from("deck_history").select("deck_id, match, win").in("deck_id", deckIds);
+    histRows = hRes.data || [];
+  }
+
+  const byDeck = {};
+  let personalMatches = 0;
+  let personalWins = 0;
+  for (const r of histRows) {
+    const m = Math.max(0, parseInt(r.match || 0, 10));
+    const w = Math.max(0, Math.min(parseInt(r.win || 0, 10), m));
+    personalMatches += m;
+    personalWins += w;
+    if (r.deck_id) {
+      if (!byDeck[r.deck_id]) byDeck[r.deck_id] = [0, 0];
+      byDeck[r.deck_id][0] += m;
+      byDeck[r.deck_id][1] += w;
+    }
+  }
+
+  let groupMatches = 0;
+  let groupWins = 0;
+  for (const r of mpRes.data || []) {
+    groupMatches += 1;
+    if (r.is_winner) groupWins += 1;
+  }
+
+  const totalMatches = personalMatches + groupMatches;
+  const totalWins = personalWins + groupWins;
+  const globalWr = totalMatches > 0 ? (totalWins / totalMatches) * 100 : 0;
+
+  const nick = (profile.nickname || "Player").trim();
+  $("pub-profile-nickname").textContent = nick;
+  $("pub-profile-bio").textContent = (profile.bio || "").trim() || "No bio set.";
+
+  if (profile.created_at) {
+    const dt = new Date(profile.created_at);
+    if (!Number.isNaN(dt.getTime())) {
+      $("pub-profile-since").textContent = `Member since ${dt.toLocaleDateString("en-US")}`;
+    }
+  }
+
+  const avEl = $("pub-profile-avatar");
+  const avUrl = (profile.avatar_url || "").trim();
+  if (avUrl) {
+    avEl.innerHTML = `<img src="${escapeHtml(avUrl)}" alt="Profile avatar" />`;
+  } else {
+    avEl.textContent = nick.slice(0, 1).toUpperCase();
+  }
+
+  $("pub-kpi-winrate").textContent = totalMatches > 0 ? `${globalWr.toFixed(1)}%` : "—";
+  $("pub-kpi-winrate-sub").textContent = `${totalWins}W / ${totalMatches}M`;
+  $("pub-kpi-matches").textContent = String(totalMatches);
+  $("pub-kpi-matches-sub").textContent = `${personalMatches} pers. · ${groupMatches} group`;
+
+  if (pubDecks.length) {
+    const best = pubDecks.reduce((b, d) => {
+      const [bm, bw] = byDeck[b.id] || [0, 0];
+      const [dm, dw] = byDeck[d.id] || [0, 0];
+      if (dm !== bm) return dm > bm ? d : b;
+      return dw > bw ? d : b;
+    }, pubDecks[0]);
+    const [bm, bw] = byDeck[best.id] || [0, 0];
+    $("pub-fav-deck-name").textContent = best.name || "Deck";
+    $("pub-fav-deck-sub").textContent =
+      bm > 0 ? `${bm} matches · ${((bw / bm) * 100).toFixed(1)}% WR` : getDeckFormatLabel(best);
+
+    $("pub-profile-decks-list").innerHTML = pubDecks
+      .map((d) => {
+        const bg = extractDeckImageUrl(d) || d._resolvedArtUrl || "";
+        const bgStyle = bg ? `style="background-image: url('${escapeHtml(bg)}');"` : "";
+        return `
+          <button type="button" class="deck-banner-card" data-pub-deck-id="${escapeHtml(d.id)}" ${bgStyle} onclick="openPublicDeck('${escapeHtml(d.id)}', 'profile', '${escapeHtml(nick)}')">
+            <div class="deck-banner-content">
+              <div>
+                <div class="deck-banner-title">${escapeHtml(d.name || "Untitled")}</div>
+                <div class="deck-banner-sub">${escapeHtml(getDeckFormatLabel(d))}</div>
+              </div>
+              <div class="deck-banner-arrow">›</div>
+            </div>
+          </button>
+        `;
+      })
+      .join("");
+
+    for (const d of pubDecks) {
+      if (!extractDeckImageUrl(d)) {
+        resolveDeckArtwork(d).then((artUrl) => {
+          if (artUrl) {
+            d._resolvedArtUrl = artUrl;
+            const el = document.querySelector(`[data-pub-deck-id="${d.id}"]`);
+            if (el) el.style.backgroundImage = `url("${artUrl}")`;
+          }
+        });
+      }
+    }
+  } else {
+    $("pub-fav-deck-name").textContent = "None";
+    $("pub-fav-deck-sub").textContent = "No public decks";
+    $("pub-profile-decks-list").innerHTML = `<p class="muted">This player has no public decks.</p>`;
+  }
+
+  publicProfileShowcase = Array.isArray(profile.favorite_cards)
+    ? profile.favorite_cards.filter((c) => c && (c.name || c.image_url || c.card_image_url))
+    : [];
+  publicProfileWishlist = wishlistCards;
+  publicProfileCardsTab = "showcase";
+  $("btn-pub-tab-showcase")?.classList.add("active");
+  $("btn-pub-tab-wishlist")?.classList.remove("active");
+  renderPublicProfileCardsGrid();
+};
+
+function renderPublicProfileCardsGrid() {
+  const grid = $("pub-profile-cards-grid");
+  if (publicProfileCardsTab === "wishlist") {
+    renderCardGridInto(grid, publicProfileWishlist, "No cards in wishlist.");
+  } else {
+    renderCardGridInto(grid, publicProfileShowcase.slice(0, 4), "No showcase cards.");
+  }
+}
+
+$("btn-pub-tab-showcase")?.addEventListener("click", () => {
+  publicProfileCardsTab = "showcase";
+  $("btn-pub-tab-showcase").classList.add("active");
+  $("btn-pub-tab-wishlist").classList.remove("active");
+  renderPublicProfileCardsGrid();
+});
+
+$("btn-pub-tab-wishlist")?.addEventListener("click", () => {
+  publicProfileCardsTab = "wishlist";
+  $("btn-pub-tab-wishlist").classList.add("active");
+  $("btn-pub-tab-showcase").classList.remove("active");
+  renderPublicProfileCardsGrid();
+});
+
+$("btn-back-to-search")?.addEventListener("click", () => {
+  $("public-profile-view")?.classList.add("hidden");
+  $("search-main-view")?.classList.remove("hidden");
+});
+
+window.openPublicDeck = async function (deckId, returnTo = "search", ownerName = "") {
+  publicDeckReturnTarget = returnTo;
+  let deck = lastSearchDecks.find((d) => String(d.id) === String(deckId));
+  if (!deck) {
+    const { data } = await sb.from("decks").select("*").eq("id", deckId).maybeSingle();
+    deck = data;
+  }
+  if (!deck) return;
+
+  $("search-main-view")?.classList.add("hidden");
+  $("public-profile-view")?.classList.add("hidden");
+  $("public-deck-view")?.classList.remove("hidden");
+
+  $("pub-deck-title").textContent = deck.name || "Deck";
+  $("pub-deck-format").textContent = getDeckFormatLabel(deck);
+  $("pub-deck-owner").textContent = ownerName ? `by ${ownerName}` : "";
+  const hero = $("pub-deck-hero");
+  const bg = extractDeckImageUrl(deck) || deck._resolvedArtUrl || "";
+  if (hero) hero.style.backgroundImage = bg ? `url("${bg}")` : "none";
+
+  setStatus($("pub-deck-status"), "Loading card list...");
+  $("pub-deck-cards-list").innerHTML = "";
+
+  const { data: dbRows } = await sb
+    .from("deck_cards")
+    .select("id, name, type_line, mana_cost, image_url, quantity, is_commander, scryfall_id")
+    .eq("deck_id", deck.id);
+
+  const cards = mergeDeckCardsWithJson(dbRows || [], deck.cards_json);
+  const total = cards.reduce((s, c) => s + Math.max(1, Number(c.quantity || 1)), 0);
+  $("pub-deck-count").textContent = total > 0 ? `${total} cards` : "";
+
+  const ci = extractCommanderColorIdentity(cards);
+  if ($("pub-deck-ci")) {
+    $("pub-deck-ci").innerHTML = ci
+      .map((sym) => `<img class="mana-svg" src="${manaSymbolToSvgUrl(sym)}" alt="${sym}" />`)
+      .join("");
+  }
+
+  setStatus($("pub-deck-status"), "");
+  if (!cards.length) {
+    $("pub-deck-cards-list").innerHTML = `<p class="muted">No cards in this deck.</p>`;
+    return;
+  }
+
+  const order = [
+    "Commander", "Creatures", "Planeswalkers", "Instants",
+    "Sorceries", "Artifacts", "Enchantments", "Battles", "Lands", "Other",
+  ];
+  const groups = new Map();
+  for (const c of cards) {
+    const cat = getCardCategory(c);
+    if (!groups.has(cat)) groups.set(cat, []);
+    groups.get(cat).push(c);
+  }
+
+  $("pub-deck-cards-list").innerHTML = order
+    .filter((cat) => groups.has(cat))
+    .map((cat) => {
+      const list = groups.get(cat).sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "en"));
+      const catCount = list.reduce((s, c) => s + Math.max(1, Number(c.quantity || 1)), 0);
+      const rows = list
+        .map((c) => {
+          const qty = Math.max(1, Number(c.quantity || 1));
+          const crown = c.is_commander ? "👑 " : "";
+          const manaHtml = renderManaPipsHtml(c.mana_cost);
+          return `
+            <div class="deck-card-row">
+              <div class="deck-card-main">
+                <div class="deck-card-name-line">
+                  <span class="deck-card-name">${crown}${escapeHtml(c.name || "")}</span>
+                </div>
+                ${manaHtml ? `<div class="deck-card-mana">${manaHtml}</div>` : ""}
+              </div>
+              <span class="deck-qty-num">${qty}x</span>
+            </div>
+          `;
+        })
+        .join("");
+      return `
+        <div class="deck-cat-block">
+          <div class="deck-cat-title"><span>${escapeHtml(cat)}</span><span>${catCount}</span></div>
+          ${rows}
+        </div>
+      `;
+    })
+    .join("");
+};
+
+$("btn-back-from-pub-deck")?.addEventListener("click", () => {
+  $("public-deck-view")?.classList.add("hidden");
+  if (publicDeckReturnTarget === "profile") {
+    $("public-profile-view")?.classList.remove("hidden");
+  } else {
+    $("search-main-view")?.classList.remove("hidden");
+  }
+});
+
+// ---- MY COLLECTION PAGE ----
 let myCollectionItems = [];
-let colActiveSetCode = null; // null = lista espansioni, "SET" = carte di quell'espansione
-let colViewMode = "list"; // "list" | "grid"
-let colSortMode = "set"; // "set" | "price" | "rarity" | "color" | "type"
+let colActiveSetCode = null;
+let colViewMode = "list";
+let colSortMode = "set";
 let colActiveDetailId = null;
 
-// Add Card Modal state
 let colAddSearchResults = [];
 let colAddSearchTimer = null;
 let colAddPrints = [];
@@ -4188,15 +4656,6 @@ function parseCollectorNumSort(cn) {
   return [m ? parseInt(m[1], 10) : 999999, s.toLowerCase()];
 }
 
-function getRarityRank(rarity) {
-  const r = String(rarity || "").toLowerCase();
-  if (r === "mythic") return 0;
-  if (r === "rare") return 1;
-  if (r === "uncommon") return 2;
-  if (r === "common") return 3;
-  return 4;
-}
-
 async function loadUserCollection() {
   if (!currentUser) return;
   setStatus($("col-page-status"), "Loading collection...");
@@ -4215,38 +4674,18 @@ async function loadUserCollection() {
 
   myCollectionItems = data || [];
   setStatus($("col-page-status"), "");
-  populateCollectionSetFilter();
   updateCollectionKpis();
   renderCollectionList();
 }
 
-function populateCollectionSetFilter() {
-  const sel = $("col-filter-set");
-  if (!sel) return;
-  const prev = sel.value || "ALL";
-  const setMap = new Map();
-  for (const it of myCollectionItems) {
-    const code = String(it.set_code || "").toUpperCase();
-    if (!code) continue;
-    if (!setMap.has(code)) setMap.set(code, it.set_name || code);
-  }
-  const entries = Array.from(setMap.entries()).sort((a, b) => a[1].localeCompare(b[1], "en"));
-  sel.innerHTML =
-    `<option value="ALL">All Sets (${entries.length})</option>` +
-    entries.map(([code, name]) => `<option value="${escapeHtml(code)}">[${escapeHtml(code)}] ${escapeHtml(name)}</option>`).join("");
-  sel.value = setMap.has(prev) ? prev : "ALL";
-}
-
 function updateCollectionKpis() {
   let totalCopies = 0;
-  let foilCopies = 0;
   let totalVal = 0;
   const sets = new Set();
 
   for (const it of myCollectionItems) {
     const qty = Math.max(1, Number(it.quantity || 1));
     totalCopies += qty;
-    if (it.foil) foilCopies += qty;
     if (it.set_code) sets.add(String(it.set_code).toUpperCase());
     const p = getCollectionUnitPrice(it);
     if (p !== null) totalVal += p * qty;
@@ -4255,7 +4694,6 @@ function updateCollectionKpis() {
   if ($("col-kpi-total")) $("col-kpi-total").textContent = String(totalCopies);
   if ($("col-kpi-unique")) $("col-kpi-unique").textContent = `${myCollectionItems.length} unique`;
   if ($("col-kpi-value")) $("col-kpi-value").textContent = `€ ${totalVal.toFixed(2)}`;
-  if ($("col-kpi-foil")) $("col-kpi-foil").textContent = `${foilCopies} foil`;
   if ($("col-kpi-sets")) $("col-kpi-sets").textContent = String(sets.size);
 }
 
@@ -4351,7 +4789,6 @@ function buildCollectionSections(list, sortMode) {
       }));
   }
 
-  // Default: numero di collezione
   return [{ title: null, items: list.slice().sort(compareByCollectorNumber) }];
 }
 
@@ -4376,13 +4813,12 @@ function renderCollectionList() {
 
   if (!myCollectionItems.length) {
     container.classList.remove("in-set-view");
-    container.innerHTML = `<p class="muted">Your collection is empty. Tap + to add cards, Import a CSV, or use the Scanner tab.</p>`;
+    container.innerHTML = `<p class="muted">Your collection is empty. Tap + at the bottom left to add cards, Import a CSV, or use the Scanner tab.</p>`;
     return;
   }
 
   const filtered = getFilteredCollectionItems();
 
-  // 1) VISTA INIZIALE: LISTA ESPANSIONI
   if (!colActiveSetCode) {
     container.classList.remove("in-set-view");
 
@@ -4431,7 +4867,6 @@ function renderCollectionList() {
     return;
   }
 
-  // 2) VISTA ESPANSIONE APERTA: CARTE DEL SET SELEZIONATO
   container.classList.add("in-set-view");
 
   const setVal = filtered.reduce((s, it) => {
@@ -4561,13 +4996,11 @@ window.changeCollectionQty = async function (itemId, delta) {
       $("col-detail-modal")?.classList.add("hidden");
       colActiveDetailId = null;
     }
-    populateCollectionSetFilter();
     updateCollectionKpis();
     renderCollectionList();
     return;
   }
 
-  // In-place update (zero flash)
   item.quantity = newQty;
   document.querySelectorAll(`[data-col-qty-id="${item.id}"]`).forEach((el) => {
     el.textContent = el.classList.contains("col-qty-overlay-badge") ? `${newQty}x` : String(newQty);
@@ -4600,7 +5033,6 @@ window.changeCollectionQty = async function (itemId, delta) {
   }
 };
 
-// Filter & View event listeners
 $("col-search-input")?.addEventListener("input", renderCollectionList);
 $("btn-col-sort-trigger")?.addEventListener("click", (e) => {
   e.stopPropagation();
@@ -4641,7 +5073,6 @@ $("btn-col-view-grid")?.addEventListener("click", () => {
   renderCollectionList();
 });
 
-// ---- COLLECTION CARD DETAIL MODAL ----
 window.openCollectionCardDetail = function (itemId) {
   const item = myCollectionItems.find((x) => String(x.id) === String(itemId));
   if (!item) return;
@@ -4677,8 +5108,6 @@ $("btn-col-detail-plus")?.addEventListener("click", () => {
   if (colActiveDetailId) changeCollectionQty(colActiveDetailId, 1);
 });
 
-
-
 $("col-detail-modal")?.addEventListener("click", (e) => {
   if (e.target === $("col-detail-modal")) {
     colActiveDetailId = null;
@@ -4686,7 +5115,7 @@ $("col-detail-modal")?.addEventListener("click", (e) => {
   }
 });
 
-// ---- ADD CARD TO COLLECTION MODAL (SEARCH -> EDITION + FOIL + QTY) ----
+// ---- ADD CARD TO COLLECTION MODAL ----
 $("btn-open-col-add")?.addEventListener("click", () => {
   colAddSearchResults = [];
   colAddPrints = [];
@@ -4899,7 +5328,7 @@ $("btn-col-add-confirm")?.addEventListener("click", async () => {
   setStatus($("col-page-status"), `Added ${qty}x ${row.name} [${row.set_code}]!`, "ok");
 });
 
-// ---- IMPORT COLLECTION (CSV FROM MANABOX/MOXFIELD OR TEXT) ----
+// ---- IMPORT COLLECTION (CSV / TEXT) ----
 function parseCsvLine(line) {
   const out = [];
   let cur = "";
@@ -4930,7 +5359,6 @@ function parseCollectionCsvOrText(rawText) {
   const lines = text.split(/\r?\n/).filter((l) => l.trim());
   if (!lines.length) return [];
 
-  // Detect CSV header (ManaBox / Moxfield)
   const firstCols = parseCsvLine(lines[0]).map((h) => h.toLowerCase().replace(/^"|"$/g, ""));
   const hasNameCol = firstCols.includes("name") || firstCols.includes("card name");
   if (firstCols.length >= 3 && hasNameCol) {
@@ -4957,7 +5385,6 @@ function parseCollectionCsvOrText(rawText) {
     return parsed;
   }
 
-  // Fallback to decklist text parser
   return parseDecklistText(text).map((it) => ({
     qty: it.qty,
     name: it.name,
@@ -5039,7 +5466,6 @@ $("btn-run-col-import")?.addEventListener("click", async () => {
       }
     }
 
-    // Merge imported rows by (scryfall_id, foil)
     const merged = new Map();
     const notFound = [];
 
@@ -5071,7 +5497,6 @@ $("btn-run-col-import")?.addEventListener("click", async () => {
 
     setStatus($("col-import-status"), `Saving ${merged.size} entries to Supabase...`);
 
-    // Sum with existing collection quantities
     const existingMap = new Map(
       myCollectionItems.map((r) => [`${r.scryfall_id}|${r.foil ? 1 : 0}`, Number(r.quantity || 0)])
     );
@@ -5108,7 +5533,35 @@ $("btn-run-col-import")?.addEventListener("click", async () => {
     if (btn) btn.disabled = false;
   }
 });
-// ---- PAGINA PROFILO ----
+
+// ---- PROFILE PAGE (ENGLISH + SHOWCASE / WISHLIST TABS) ----
+let myProfileShowcase = [];
+let myProfileWishlist = [];
+let myProfileCardsTab = "showcase";
+
+function renderMyProfileCardsGrid() {
+  const flexGrid = $("profile-flex-grid");
+  if (myProfileCardsTab === "wishlist") {
+    renderCardGridInto(flexGrid, myProfileWishlist, "No cards in your wishlist yet.");
+  } else {
+    renderCardGridInto(flexGrid, myProfileShowcase.slice(0, 4), "No showcase cards yet (you can add them from the desktop app).");
+  }
+}
+
+$("btn-profile-tab-showcase")?.addEventListener("click", () => {
+  myProfileCardsTab = "showcase";
+  $("btn-profile-tab-showcase").classList.add("active");
+  $("btn-profile-tab-wishlist").classList.remove("active");
+  renderMyProfileCardsGrid();
+});
+
+$("btn-profile-tab-wishlist")?.addEventListener("click", () => {
+  myProfileCardsTab = "wishlist";
+  $("btn-profile-tab-wishlist").classList.add("active");
+  $("btn-profile-tab-showcase").classList.remove("active");
+  renderMyProfileCardsGrid();
+});
+
 async function loadProfile() {
   if (!currentUser) return;
   const uid = currentUser.id;
@@ -5117,14 +5570,14 @@ async function loadProfile() {
   let profile = null;
   const profRes = await sb
     .from("profiles")
-    .select("id, nickname, bio, avatar_url, favorite_cards, created_at")
+    .select("id, nickname, bio, avatar_url, favorite_cards, wishlist, created_at")
     .eq("id", uid)
     .maybeSingle();
 
   if (profRes.error) {
     const fallbackRes = await sb
       .from("profiles")
-      .select("id, nickname, created_at")
+      .select("id, nickname, bio, avatar_url, favorite_cards, created_at")
       .eq("id", uid)
       .maybeSingle();
     profile = fallbackRes.data || {};
@@ -5132,13 +5585,14 @@ async function loadProfile() {
     profile = profRes.data || {};
   }
 
-  const [decksRes, mpRes, friendsRes] = await Promise.all([
+  const [decksRes, mpRes, friendsRes, wishlistCards] = await Promise.all([
     sb.from("decks").select("id, name, type, format").eq("owner_id", uid),
     sb.from("match_players").select("is_winner").eq("user_id", uid),
     sb
       .from("friendships")
       .select("id, requester_id, addressee_id, status")
       .or(`requester_id.eq.${uid},addressee_id.eq.${uid}`),
+    fetchWishlistForUser(uid, profile),
   ]);
 
   const decks = decksRes.data || [];
@@ -5179,8 +5633,8 @@ async function loadProfile() {
   const totalWins = personalWins + groupWins;
   const globalWr = totalMatches > 0 ? (totalWins / totalMatches) * 100 : 0;
 
-  let favDeckName = "Nessuno";
-  let favDeckSub = "0 partite";
+  let favDeckName = "None";
+  let favDeckSub = "0 matches";
   if (decks.length) {
     const bestDeck = decks.reduce((best, d) => {
       const [bm, bw] = byDeck[best.id] || [0, 0];
@@ -5189,11 +5643,11 @@ async function loadProfile() {
       return dw > bw ? d : best;
     }, decks[0]);
     const [bm, bw] = byDeck[bestDeck.id] || [0, 0];
-    favDeckName = bestDeck.name || "Mazzo";
+    favDeckName = bestDeck.name || "Deck";
     if (bm > 0) {
-      favDeckSub = `${bm} partite · ${((bw / bm) * 100).toFixed(1)}% WR`;
+      favDeckSub = `${bm} matches · ${((bw / bm) * 100).toFixed(1)}% WR`;
     } else {
-      favDeckSub = (bestDeck.format || bestDeck.type || "Mazzo principale").trim();
+      favDeckSub = (bestDeck.format || bestDeck.type || "Main deck").trim();
     }
   }
 
@@ -5203,14 +5657,14 @@ async function loadProfile() {
     (f) => f.status === "pending" && f.addressee_id === uid
   ).length;
 
-  const nickname = (profile.nickname || "").trim() || (currentUser.email || "Giocatore").split("@")[0];
+  const nickname = (profile.nickname || "").trim() || (currentUser.email || "Player").split("@")[0];
   $("profile-nickname").textContent = nickname;
   $("profile-email").textContent = currentUser.email || "";
 
   if (profile.created_at) {
     const dt = new Date(profile.created_at);
     if (!Number.isNaN(dt.getTime())) {
-      $("profile-since").textContent = `Membro dal ${dt.toLocaleDateString("it-IT")}`;
+      $("profile-since").textContent = `Member since ${dt.toLocaleDateString("en-US")}`;
     }
   } else {
     $("profile-since").textContent = "";
@@ -5219,66 +5673,268 @@ async function loadProfile() {
   const avatarEl = $("profile-avatar");
   const avatarUrl = (profile.avatar_url || "").trim();
   if (avatarUrl) {
-    avatarEl.innerHTML = `<img src="${escapeHtml(avatarUrl)}" alt="Foto profilo" />`;
+    avatarEl.innerHTML = `<img src="${escapeHtml(avatarUrl)}" alt="Profile avatar" />`;
   } else {
     avatarEl.textContent = nickname.slice(0, 1).toUpperCase();
   }
 
   const bio = (profile.bio || "").trim();
-  $("profile-bio").textContent = bio || "Nessuna bio impostata.";
+  $("profile-bio").textContent = bio || "No bio set.";
 
   $("kpi-winrate").textContent = totalMatches > 0 ? `${globalWr.toFixed(1)}%` : "—";
-  $("kpi-winrate-sub").textContent = `${totalWins}V / ${totalMatches}P`;
+  $("kpi-winrate-sub").textContent = `${totalWins}W / ${totalMatches}M`;
 
   $("kpi-matches").textContent = String(totalMatches);
-  $("kpi-matches-sub").textContent = `${personalMatches} pers. · ${groupMatches} gruppi`;
+  $("kpi-matches-sub").textContent = `${personalMatches} pers. · ${groupMatches} group`;
 
   $("kpi-decks").textContent = String(decks.length);
-  $("kpi-decks-sub").textContent = decks.length === 1 ? "Mazzo personale" : "Mazzi personali";
+  $("kpi-decks-sub").textContent = decks.length === 1 ? "Personal deck" : "Personal decks";
 
   $("kpi-friends").textContent = String(friendsCount);
   $("kpi-friends-sub").textContent =
-    pendingIncoming > 0 ? `${pendingIncoming} richieste in attesa` : "Connessi";
+    pendingIncoming > 0 ? `${pendingIncoming} pending requests` : "Connected";
 
   $("profile-fav-deck-name").textContent = favDeckName;
   $("profile-fav-deck-sub").textContent = favDeckSub;
 
-  const flexGrid = $("profile-flex-grid");
-  const favCards = Array.isArray(profile.favorite_cards)
-    ? profile.favorite_cards.filter((c) => c && (c.name || c.image_url))
+  myProfileShowcase = Array.isArray(profile.favorite_cards)
+    ? profile.favorite_cards.filter((c) => c && (c.name || c.image_url || c.card_image_url))
     : [];
+  myProfileWishlist = wishlistCards;
+  renderMyProfileCardsGrid();
+}
 
-  if (!favCards.length) {
-    flexGrid.innerHTML = `<p class="muted" style="grid-column:1 / -1;margin:4px 0;">Nessuna carta in vetrina (puoi aggiungerle dall'app desktop).</p>`;
-  } else {
-    flexGrid.innerHTML = favCards
-      .slice(0, 4)
-      .map((c) => {
-        const img = c.image_url || c.card_image_url || "";
-        const isFoil = Boolean(c.foil);
-        const setInfo = [
-          (c.set_code || c.set || "").toUpperCase(),
-          c.collector_number ? `#${c.collector_number}` : "",
-        ]
-          .filter(Boolean)
-          .join(" ");
-        return `
-          <div class="flex-card-slot ${isFoil ? "is-foil" : ""}">
-            <div class="flex-card-img-wrap">
-              ${isFoil ? `<span class="flex-foil-badge">✨ Foil</span>` : ""}
-              ${img ? `<img src="${escapeHtml(img)}" alt="${escapeHtml(c.name || "Carta")}" loading="lazy" />` : ""}
-            </div>
-            <div class="flex-card-name">${escapeHtml(c.name || "Carta")}</div>
-            ${setInfo ? `<div class="flex-card-set">${escapeHtml(setInfo)}</div>` : ""}
-          </div>
-        `;
-      })
-      .join("");
+// ---- SCANNER QUEUE FOLDER (REVIEW, FOIL, EXPANSION, QTY -> SAVE ALL) ----
+let scanQueue = (() => {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_SCAN_QUEUE_KEY) || "[]");
+    return Array.isArray(saved) ? saved : [];
+  } catch {
+    return [];
+  }
+})();
+const scanQueuePrintsCache = new Map();
+
+function saveScanQueueToStorage() {
+  try {
+    localStorage.setItem(STORAGE_SCAN_QUEUE_KEY, JSON.stringify(scanQueue));
+  } catch {
+    // ignore
   }
 }
 
-// ---- SALVATAGGIO CARTA IN COLLEZIONE ----
-async function saveCardPayloadToCollection(cardPayload, isFoil) {
+function getScanQueueTotalCount() {
+  return scanQueue.reduce((s, it) => s + Math.max(1, Number(it.quantity || 1)), 0);
+}
+
+function updateScanQueueBadge() {
+  const total = getScanQueueTotalCount();
+  if ($("scan-queue-count")) $("scan-queue-count").textContent = String(total);
+  if ($("scan-queue-modal-count")) $("scan-queue-modal-count").textContent = String(total);
+}
+
+function addCardToScanQueue(cardPayload) {
+  const sid = String(cardPayload.scryfall_id || "");
+  const existing = scanQueue.find(
+    (it) => it.scryfall_id === sid && !it.foil
+  );
+  if (existing) {
+    existing.quantity = Math.max(1, Number(existing.quantity || 1)) + 1;
+  } else {
+    scanQueue.push({
+      scryfall_id: sid,
+      name: cardPayload.name || "",
+      set_code: String(cardPayload.set_code || "").toUpperCase(),
+      set_name: cardPayload.set_name || "",
+      collector_number: String(cardPayload.collector_number || ""),
+      released_at: cardPayload.released_at || "",
+      rarity: String(cardPayload.rarity || "").toLowerCase(),
+      type_line: cardPayload.type_line || "",
+      mana_cost: cardPayload.mana_cost || "",
+      cmc: Number(cardPayload.cmc || 0),
+      colors: Array.isArray(cardPayload.colors) ? cardPayload.colors : [],
+      image_url: cardPayload.image_url || "",
+      card_image_url: cardPayload.card_image_url || cardPayload.image_url || "",
+      price_eur: cardPayload.price_eur ?? null,
+      price_eur_foil: cardPayload.price_eur_foil ?? null,
+      foil: false,
+      quantity: 1,
+    });
+  }
+  saveScanQueueToStorage();
+  updateScanQueueBadge();
+}
+
+async function ensurePrintsForQueueItem(cardName) {
+  const cleanName = String(cardName || "").split("//")[0].trim();
+  const key = cleanName.toLowerCase();
+  if (!key) return [];
+  if (scanQueuePrintsCache.has(key)) return scanQueuePrintsCache.get(key);
+  try {
+    const resp = await fetch(
+      `https://api.scryfall.com/cards/search?q=${encodeURIComponent(`!"${cleanName}"`)}&unique=prints&order=released&dir=desc`
+    );
+    if (!resp.ok) {
+      scanQueuePrintsCache.set(key, []);
+      return [];
+    }
+    const json = await resp.json();
+    const prints = Array.isArray(json.data) ? json.data : [];
+    scanQueuePrintsCache.set(key, prints);
+    return prints;
+  } catch {
+    return [];
+  }
+}
+
+function renderScanQueueModalList() {
+  const listEl = $("scan-queue-list");
+  if (!listEl) return;
+  updateScanQueueBadge();
+
+  if (!scanQueue.length) {
+    listEl.innerHTML = `<p class="muted" style="text-align:center;margin:12px 0;">No scanned cards yet. Scan a card and tap Yes to add it here.</p>`;
+    return;
+  }
+
+  listEl.innerHTML = scanQueue
+    .map((it, idx) => {
+      const cleanKey = String(it.name || "").split("//")[0].trim().toLowerCase();
+      const prints = scanQueuePrintsCache.get(cleanKey);
+      const img = it.card_image_url || it.image_url || "";
+      const setMeta = `[${escapeHtml(it.set_code || "?")}] ${escapeHtml(it.set_name || "")}${it.collector_number ? ` #${escapeHtml(it.collector_number)}` : ""}`;
+
+      let expansionHtml = "";
+      if (prints === undefined) {
+        expansionHtml = `<div class="scan-queue-sub">Loading printings...</div>`;
+      } else if (prints.length > 1) {
+        const opts = prints
+          .map((p, pi) => {
+            const sc = String(p.set || "").toUpperCase();
+            const cn = p.collector_number ? `#${p.collector_number}` : "";
+            const sel =
+              (p.id && p.id === it.scryfall_id) ||
+              (!it.scryfall_id && sc === it.set_code)
+                ? "selected"
+                : "";
+            return `<option value="${pi}" ${sel}>[${escapeHtml(sc)}] ${escapeHtml(p.set_name || sc)} ${escapeHtml(cn)}</option>`;
+          })
+          .join("");
+        expansionHtml = `
+          <select class="scan-queue-set-select" onchange="changeScanQueuePrint(${idx}, this.value)">
+            ${opts}
+          </select>
+        `;
+      }
+
+      return `
+        <div class="scan-queue-item">
+          <div class="scan-queue-item-top">
+            ${img ? `<img class="scan-queue-thumb" src="${escapeHtml(img)}" alt="${escapeHtml(it.name)}" />` : `<div class="scan-queue-thumb"></div>`}
+            <div class="scan-queue-info">
+              <div class="scan-queue-name">${escapeHtml(it.name || "Card")}</div>
+              <div class="scan-queue-sub">${setMeta}</div>
+            </div>
+          </div>
+          ${expansionHtml}
+          <div class="scan-queue-controls-row">
+            <label class="scan-queue-foil-label">
+              <input type="checkbox" ${it.foil ? "checked" : ""} onchange="toggleScanQueueFoil(${idx}, this.checked)" />
+              <span>✨ Foil</span>
+            </label>
+            <div class="deck-qty-controls">
+              <button type="button" class="deck-qty-btn" onclick="changeScanQueueQty(${idx}, -1)">−</button>
+              <span class="deck-qty-num">${Math.max(1, Number(it.quantity || 1))}</span>
+              <button type="button" class="deck-qty-btn" onclick="changeScanQueueQty(${idx}, 1)">+</button>
+            </div>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+window.toggleScanQueueFoil = function (idx, isFoil) {
+  if (!scanQueue[idx]) return;
+  scanQueue[idx].foil = Boolean(isFoil);
+  saveScanQueueToStorage();
+};
+
+window.changeScanQueueQty = function (idx, delta) {
+  if (!scanQueue[idx]) return;
+  const next = Math.max(0, Number(scanQueue[idx].quantity || 1) + delta);
+  if (next <= 0) {
+    scanQueue.splice(idx, 1);
+  } else {
+    scanQueue[idx].quantity = next;
+  }
+  saveScanQueueToStorage();
+  renderScanQueueModalList();
+};
+
+window.changeScanQueuePrint = function (idx, printIdxRaw) {
+  const item = scanQueue[idx];
+  if (!item) return;
+  const cleanKey = String(item.name || "").split("//")[0].trim().toLowerCase();
+  const prints = scanQueuePrintsCache.get(cleanKey) || [];
+  const pr = prints[parseInt(printIdxRaw, 10)];
+  if (!pr) return;
+
+  const normalUrl = pr.image_uris?.normal || pr.card_faces?.[0]?.image_uris?.normal || "";
+  const artUrl = pr.image_uris?.art_crop || pr.card_faces?.[0]?.image_uris?.art_crop || normalUrl;
+  item.scryfall_id = pr.id || item.scryfall_id;
+  item.set_code = String(pr.set || "").toUpperCase();
+  item.set_name = pr.set_name || "";
+  item.collector_number = String(pr.collector_number || "");
+  item.released_at = pr.released_at || "";
+  item.rarity = String(pr.rarity || "").toLowerCase();
+  item.type_line = pr.type_line || item.type_line;
+  item.mana_cost = extractManaCostFromScryfall(pr) || item.mana_cost;
+  item.cmc = Number(pr.cmc ?? item.cmc ?? 0);
+  item.colors = Array.isArray(pr.colors) ? pr.colors : item.colors;
+  if (normalUrl) item.card_image_url = normalUrl;
+  if (artUrl) item.image_url = artUrl;
+  item.price_eur = extractScryfallEurPrice(pr, false);
+  item.price_eur_foil = extractScryfallEurPrice(pr, true);
+
+  saveScanQueueToStorage();
+  renderScanQueueModalList();
+};
+
+$("btn-open-scan-queue")?.addEventListener("click", async () => {
+  setStatus($("scan-queue-status"), "");
+  $("scan-queue-modal")?.classList.remove("hidden");
+  renderScanQueueModalList();
+
+  const uniqueNames = Array.from(new Set(scanQueue.map((it) => it.name).filter(Boolean)));
+  let fetchedAny = false;
+  for (const name of uniqueNames) {
+    const key = String(name).split("//")[0].trim().toLowerCase();
+    if (!scanQueuePrintsCache.has(key)) {
+      await ensurePrintsForQueueItem(name);
+      fetchedAny = true;
+    }
+  }
+  if (fetchedAny && !$("scan-queue-modal")?.classList.contains("hidden")) {
+    renderScanQueueModalList();
+  }
+});
+
+$("btn-close-scan-queue")?.addEventListener("click", () => {
+  $("scan-queue-modal")?.classList.add("hidden");
+});
+
+$("btn-clear-scan-queue")?.addEventListener("click", () => {
+  if (!scanQueue.length) return;
+  if (!confirm("Clear all scanned cards from this folder?")) return;
+  scanQueue = [];
+  saveScanQueueToStorage();
+  renderScanQueueModalList();
+  setStatus($("scan-queue-status"), "Folder cleared.");
+});
+
+async function saveCardPayloadToCollection(cardPayload, isFoil, qty = 1) {
+  const addQty = Math.max(1, Number(qty || 1));
   const rowToInsert = {
     user_id: currentUser.id,
     scryfall_id: cardPayload.scryfall_id,
@@ -5296,34 +5952,81 @@ async function saveCardPayloadToCollection(cardPayload, isFoil) {
     card_image_url: cardPayload.card_image_url || cardPayload.image_url || "",
     price_eur: cardPayload.price_eur ?? null,
     price_eur_foil: cardPayload.price_eur_foil ?? null,
-    foil: isFoil,
-    quantity: 1,
+    foil: Boolean(isFoil),
+    quantity: addQty,
   };
 
-  const { error: checkErr } = await sb
+  const { data: existing, error: selErr } = await sb
     .from("user_collection")
     .select("id, quantity")
     .eq("user_id", currentUser.id)
     .eq("scryfall_id", cardPayload.scryfall_id)
-    .eq("foil", isFoil)
-    .maybeSingle()
-    .then(async ({ data: existing, error }) => {
-      if (error) return { error };
-      if (existing) {
-        return sb
-          .from("user_collection")
-          .update({ quantity: (existing.quantity || 1) + 1 })
-          .eq("id", existing.id);
-      }
-      return sb.from("user_collection").insert(rowToInsert);
-    });
+    .eq("foil", Boolean(isFoil))
+    .maybeSingle();
 
-  if (checkErr) {
-    throw new Error(checkErr.message);
+  if (selErr) throw new Error(selErr.message);
+
+  if (existing) {
+    const { error } = await sb
+      .from("user_collection")
+      .update({
+        quantity: (existing.quantity || 0) + addQty,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", existing.id);
+    if (error) throw new Error(error.message);
+  } else {
+    const { error } = await sb.from("user_collection").insert(rowToInsert);
+    if (error) throw new Error(error.message);
   }
 }
 
-// ---- DISEGNO DEI 4 BORDI RILEVATI ----
+$("btn-scan-queue-ok")?.addEventListener("click", async () => {
+  if (!scanQueue.length) {
+    $("scan-queue-modal")?.classList.add("hidden");
+    return;
+  }
+
+  const btnOk = $("btn-scan-queue-ok");
+  if (btnOk) btnOk.disabled = true;
+
+  try {
+    // Merge identical (scryfall_id, foil) entries before saving
+    const merged = new Map();
+    for (const it of scanQueue) {
+      const k = `${it.scryfall_id}|${it.foil ? 1 : 0}`;
+      if (merged.has(k)) {
+        merged.get(k).quantity += Math.max(1, Number(it.quantity || 1));
+      } else {
+        merged.set(k, { ...it, quantity: Math.max(1, Number(it.quantity || 1)) });
+      }
+    }
+
+    const items = Array.from(merged.values());
+    setStatus($("scan-queue-status"), `Saving ${items.length} entries to your collection...`);
+
+    for (const item of items) {
+      await saveCardPayloadToCollection(item, Boolean(item.foil), item.quantity);
+    }
+
+    const totalSaved = getScanQueueTotalCount();
+    scanQueue = [];
+    saveScanQueueToStorage();
+    updateScanQueueBadge();
+    $("scan-queue-modal")?.classList.add("hidden");
+    setStatus($("collection-status"), `Saved ${totalSaved} card${totalSaved === 1 ? "" : "s"} to Collection!`, "ok");
+
+    if (typeof loadUserCollection === "function") {
+      loadUserCollection();
+    }
+  } catch (err) {
+    setStatus($("scan-queue-status"), `Save error: ${err.message}`, "err");
+  } finally {
+    if (btnOk) btnOk.disabled = false;
+  }
+});
+
+// ---- QUAD OVERLAY DRAWING ----
 function clearQuadOverlay() {
   const canvas = $("quad-overlay");
   if (!canvas) return;
@@ -5388,7 +6091,7 @@ function drawQuadOverlay(normQuad, matched = false) {
   ctx.restore();
 }
 
-// ---- WEBSOCKET + STREAMING FRAME ----
+// ---- WEBSOCKET + FRAME STREAMING ----
 function stopFrameLoop() {
   if (sendFrameTimer) {
     clearInterval(sendFrameTimer);
@@ -5414,7 +6117,7 @@ function stopScannerSession() {
       wsConn.onerror = null;
       wsConn.close();
     } catch {
-      // ignora
+      // ignore
     }
     wsConn = null;
   }
@@ -5450,6 +6153,7 @@ function startFrameLoop() {
   stopFrameLoop();
   sendFrameTimer = setInterval(() => {
     if (pendingProposalCard) return;
+    if (!$("scan-queue-modal")?.classList.contains("hidden")) return;
     if (awaitingServerReply && Date.now() - lastFrameSentAt < 5000) return;
     if (!wsConn || wsConn.readyState !== WebSocket.OPEN) return;
     const video = $("scan-video");
@@ -5492,13 +6196,13 @@ function connectScannerWs() {
       wsConn.onerror = null;
       wsConn.close();
     } catch {
-      // ignora
+      // ignore
     }
     wsConn = null;
   }
 
-  setScanStateBadge("Connessione...");
-  setScannerConnectionUi("Avvio...", "connecting", true);
+  setScanStateBadge("Connecting...");
+  setScannerConnectionUi("Starting...", "connecting", true);
 
   const socket = new WebSocket(url);
   wsConn = socket;
@@ -5508,8 +6212,8 @@ function connectScannerWs() {
       clearTimeout(wsRetryTimer);
       wsRetryTimer = null;
     }
-    setScanStateBadge("Inquadra una carta");
-    setScannerConnectionUi("Pronto", "connected", true);
+    setScanStateBadge("Point at a card");
+    setScannerConnectionUi("Ready", "connected", true);
     setStatus($("collection-status"), "");
     sendSetFilterToWs();
     startFrameLoop();
@@ -5536,6 +6240,7 @@ function connectScannerWs() {
 
     awaitingServerReply = false;
     if (pendingProposalCard) return;
+    if (!$("scan-queue-modal")?.classList.contains("hidden")) return;
 
     if (Date.now() < scanPauseUntil) {
       if (payload && payload.detected) {
@@ -5543,7 +6248,7 @@ function connectScannerWs() {
       } else {
         drawQuadOverlay(null, false);
       }
-      setScanStateBadge("Salvata! Cambia carta...");
+      setScanStateBadge("Added! Switch card...");
       return;
     }
 
@@ -5554,12 +6259,12 @@ function connectScannerWs() {
         if (unlockFramesCounter >= 3) {
           lockedAfterConfirmCard = null;
           unlockFramesCounter = 0;
-          setScanStateBadge("Inquadra la prossima carta");
+          setScanStateBadge("Point at next card");
         } else {
-          setScanStateBadge("Cambia carta per proseguire");
+          setScanStateBadge("Switch card to continue");
         }
       } else {
-        setScanStateBadge("Inquadra una carta");
+        setScanStateBadge("Point at a card");
       }
       return;
     }
@@ -5579,14 +6284,14 @@ function connectScannerWs() {
       if (stillSameCard) {
         unlockFramesCounter = 0;
         drawQuadOverlay(payload.quad, true);
-        setScanStateBadge("Cambia carta per proseguire");
+        setScanStateBadge("Switch card to continue");
         return;
       }
 
       unlockFramesCounter += 1;
       if (unlockFramesCounter < 3) {
         drawQuadOverlay(payload.quad, false);
-        setScanStateBadge("Cambia carta per proseguire");
+        setScanStateBadge("Switch card to continue");
         return;
       }
 
@@ -5605,7 +6310,7 @@ function connectScannerWs() {
     if (filtered.length > 0) {
       showCardProposal(filtered);
     } else {
-      setScanStateBadge("Carta rilevata...");
+      setScanStateBadge("Card detected...");
     }
   };
 
@@ -5620,8 +6325,8 @@ function connectScannerWs() {
 
     const isCollectionActive = $("tab-collection")?.classList.contains("active");
     if (isCollectionActive && cameraStream) {
-      setScanStateBadge("Avvio in corso (~25s)...");
-      setScannerConnectionUi("Avvio...", "connecting", true);
+      setScanStateBadge("Waking server (~25s)...");
+      setScannerConnectionUi("Starting...", "connecting", true);
       wsRetryTimer = setTimeout(() => {
         if ($("tab-collection")?.classList.contains("active") && cameraStream) {
           connectScannerWs();
@@ -5630,18 +6335,18 @@ function connectScannerWs() {
     } else {
       setScannerConnectionUi("Offline", "disconnected", false);
       if (isCollectionActive && !pendingProposalCard) {
-        setScanStateBadge("In pausa");
+        setScanStateBadge("Paused");
       }
     }
   };
 }
 
-// ---- PROPOSTA SÌ / NO ----
+// ---- YES / NO PROPOSAL ----
 function applyMatchToProposal(matchItem) {
   if (!pendingProposalCard || !matchItem) return;
   pendingProposalCard.payload = matchItem;
 
-  $("proposal-name").textContent = matchItem.name || "Carta";
+  $("proposal-name").textContent = matchItem.name || "Card";
   const confPct = matchItem.confidence ? ` · ${Math.round(matchItem.confidence * 100)}%` : "";
   $("proposal-meta").textContent =
     `${matchItem.set_code || ""}${matchItem.collector_number ? ` #${matchItem.collector_number}` : ""} · ${matchItem.set_name || ""}${confPct}`;
@@ -5669,7 +6374,7 @@ function showCardProposal(matches) {
     nameKey,
   };
   proposalMatches = matches;
-  setScanStateBadge("Carta trovata");
+  setScanStateBadge("Card found");
 
   applyMatchToProposal(best);
 
@@ -5700,7 +6405,7 @@ function hideCardProposalAndResume() {
   proposalMatches = [];
   clearQuadOverlay();
   $("proposal-modal")?.classList.add("hidden");
-  setScanStateBadge(lockedAfterConfirmCard ? "Salvata! Cambia carta..." : "Inquadra una carta");
+  setScanStateBadge(lockedAfterConfirmCard ? "Added! Switch card..." : "Point at a card");
 }
 
 $("btn-proposal-no")?.addEventListener("click", () => {
@@ -5709,55 +6414,48 @@ $("btn-proposal-no")?.addEventListener("click", () => {
     if (pendingProposalCard.nameKey) rejectedCardKeys.add(pendingProposalCard.nameKey);
     updateRejectedBadge();
   }
-  setStatus($("collection-status"), "Scartata.", "");
+  setStatus($("collection-status"), "Rejected.", "");
   hideCardProposalAndResume();
 });
 
-$("btn-proposal-yes")?.addEventListener("click", async () => {
+$("btn-proposal-yes")?.addEventListener("click", () => {
   if (!pendingProposalCard) return;
   const c = pendingProposalCard.payload;
   const confirmedLock = {
     idKey: String(c.scryfall_id || "").toLowerCase(),
     nameKey: String(c.name || "").toLowerCase(),
   };
-  const isFoil = $("scan-finish-select")?.value === "foil";
 
   rejectedCardKeys.clear();
   updateRejectedBadge();
 
-  try {
-    setStatus($("collection-status"), `Salvataggio ${c.name}...`);
-    await saveCardPayloadToCollection(c, isFoil);
-
-    lockedAfterConfirmCard = confirmedLock;
-    unlockFramesCounter = 0;
-    scanPauseUntil = Date.now() + 1200;
-    setStatus($("collection-status"), `${c.name} [${c.set_code}] aggiunta!`, "ok");
-  } catch (err) {
-    setStatus($("collection-status"), `Errore salvataggio: ${err.message}`, "err");
-  } finally {
-    hideCardProposalAndResume();
-  }
+  addCardToScanQueue(c);
+  lockedAfterConfirmCard = confirmedLock;
+  unlockFramesCounter = 0;
+  scanPauseUntil = Date.now() + 1200;
+  setStatus($("collection-status"), `${c.name} [${c.set_code}] added to Scanned folder!`, "ok");
+  hideCardProposalAndResume();
 });
 
 $("btn-reset-rejected")?.addEventListener("click", () => {
   rejectedCardKeys.clear();
   updateRejectedBadge();
-  setStatus($("collection-status"), "Carte scartate azzerate.", "ok");
+  setStatus($("collection-status"), "Rejected cards reset.", "ok");
 });
 
 async function ensureCameraAndWs() {
   bindSetSelectorUi();
   updateRejectedBadge();
+  updateScanQueueBadge();
 
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    setStatus($("collection-status"), "Fotocamera non disponibile su questo browser.", "err");
+    setStatus($("collection-status"), "Camera not available on this browser.", "err");
     return;
   }
 
   if (!cameraStream) {
     try {
-      setScanStateBadge("Avvio fotocamera...");
+      setScanStateBadge("Starting camera...");
       cameraStream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: { ideal: "environment" },
@@ -5773,10 +6471,10 @@ async function ensureCameraAndWs() {
       await video.play().catch(() => {});
       $("camera-placeholder")?.classList.add("hidden");
     } catch (err) {
-      setScanStateBadge("Fotocamera bloccata");
+      setScanStateBadge("Camera blocked");
       $("camera-placeholder")?.classList.remove("hidden");
       setScannerConnectionUi("Offline", "disconnected", false);
-      setStatus($("collection-status"), `Errore fotocamera: ${err.message}`, "err");
+      setStatus($("collection-status"), `Camera error: ${err.message}`, "err");
       return;
     }
   }
@@ -5784,7 +6482,7 @@ async function ensureCameraAndWs() {
   if (!wsConn || wsConn.readyState === WebSocket.CLOSED || wsConn.readyState === WebSocket.CLOSING) {
     connectScannerWs();
   } else if (wsConn.readyState === WebSocket.OPEN) {
-    setScannerConnectionUi("Pronto", "connected", true);
+    setScannerConnectionUi("Ready", "connected", true);
     sendSetFilterToWs();
     startFrameLoop();
   }
@@ -5795,14 +6493,14 @@ $("btn-start-camera")?.addEventListener("click", ensureCameraAndWs);
 $("btnToggleScanner")?.addEventListener("click", async () => {
   if (scannerActive) {
     stopScannerSession();
-    setScanStateBadge("In pausa");
+    setScanStateBadge("Paused");
     setStatus($("collection-status"), "");
   } else {
     await ensureCameraAndWs();
   }
 });
 
-// Ripristina eventuale sessione già attiva
+// Restore existing session
 (async () => {
   const { data } = await sb.auth.getSession();
   if (data?.session?.user) {
