@@ -20,7 +20,7 @@ const DEFAULT_SCANNER_WS_URL = "wss://manastat-scanner-server.onrender.com/ws/sc
 const STORAGE_SETS_KEY = "manastat_scanner_selected_sets";
 
 // Badge versione sempre visibile sopra la barra di navigazione
-const APP_UI_VERSION = "v3.8";
+const APP_UI_VERSION = "v3.9";
 let connectedServerVersion = "";
 
 function renderVersionBadge() {
@@ -4163,6 +4163,7 @@ $("btn-send-group-invite")?.addEventListener("click", async () => {
 let myCollectionItems = [];
 let colActiveSetCode = null; // null = lista espansioni, "SET" = carte di quell'espansione
 let colViewMode = "list"; // "list" | "grid"
+let colSortMode = "set"; // "set" | "price" | "rarity" | "color" | "type"
 let colActiveDetailId = null;
 
 // Add Card Modal state
@@ -4273,69 +4274,85 @@ function getFilteredCollectionItems() {
   });
 }
 
-function getColorSortRank(colors) {
+function compareByCollectorNumber(a, b) {
+  const [na, sa] = parseCollectorNumSort(a.collector_number);
+  const [nb, sbStr] = parseCollectorNumSort(b.collector_number);
+  if (na !== nb) return na - nb;
+  if (sa !== sbStr) return sa.localeCompare(sbStr);
+  return String(a.name || "").localeCompare(String(b.name || ""), "en");
+}
+
+function getColorGroupInfo(colors) {
   const arr = Array.isArray(colors) ? colors.map((c) => String(c).toUpperCase()) : [];
-  if (arr.length === 0) return 6; // Colorless
-  if (arr.length > 1) return 5;   // Multicolor
-  const order = { W: 0, U: 1, B: 2, R: 3, G: 4 };
-  return order[arr[0]] ?? 7;
+  if (arr.length === 0) return { rank: 6, label: "Colorless" };
+  if (arr.length > 1) return { rank: 5, label: "Multicolor" };
+  const map = {
+    W: { rank: 0, label: "White" },
+    U: { rank: 1, label: "Blue" },
+    B: { rank: 2, label: "Black" },
+    R: { rank: 3, label: "Red" },
+    G: { rank: 4, label: "Green" },
+  };
+  return map[arr[0]] || { rank: 7, label: "Other" };
 }
 
-function getTypeSortRank(typeLine) {
+function getTypeGroupInfo(typeLine) {
   const tl = String(typeLine || "").toLowerCase();
-  if (tl.includes("creature")) return 0;
-  if (tl.includes("planeswalker")) return 1;
-  if (tl.includes("instant")) return 2;
-  if (tl.includes("sorcery")) return 3;
-  if (tl.includes("artifact")) return 4;
-  if (tl.includes("enchantment")) return 5;
-  if (tl.includes("battle")) return 6;
-  if (tl.includes("land")) return 7;
-  return 8;
+  if (tl.includes("creature")) return { rank: 0, label: "Creatures" };
+  if (tl.includes("planeswalker")) return { rank: 1, label: "Planeswalkers" };
+  if (tl.includes("instant")) return { rank: 2, label: "Instants" };
+  if (tl.includes("sorcery")) return { rank: 3, label: "Sorceries" };
+  if (tl.includes("artifact")) return { rank: 4, label: "Artifacts" };
+  if (tl.includes("enchantment")) return { rank: 5, label: "Enchantments" };
+  if (tl.includes("battle")) return { rank: 6, label: "Battles" };
+  if (tl.includes("land")) return { rank: 7, label: "Lands" };
+  return { rank: 8, label: "Other" };
 }
 
-function sortCollectionSlice(list, sortMode) {
-  const arr = list.slice();
+function getRarityGroupInfo(rarity) {
+  const r = String(rarity || "").toLowerCase();
+  if (r === "mythic") return { rank: 0, label: "Mythic" };
+  if (r === "rare") return { rank: 1, label: "Rare" };
+  if (r === "uncommon") return { rank: 2, label: "Uncommon" };
+  if (r === "common") return { rank: 3, label: "Common" };
+  return { rank: 4, label: "Other" };
+}
+
+function buildCollectionSections(list, sortMode) {
   if (sortMode === "price") {
-    return arr.sort((a, b) => {
+    const sorted = list.slice().sort((a, b) => {
       const pa = (getCollectionUnitPrice(a) || 0) * Math.max(1, Number(a.quantity || 1));
       const pb = (getCollectionUnitPrice(b) || 0) * Math.max(1, Number(b.quantity || 1));
       if (pb !== pa) return pb - pa;
-      return String(a.name || "").localeCompare(String(b.name || ""), "en");
+      return compareByCollectorNumber(a, b);
     });
+    return [{ title: null, items: sorted }];
   }
-  if (sortMode === "rarity") {
-    return arr.sort((a, b) => {
-      const ra = getRarityRank(a.rarity);
-      const rb = getRarityRank(b.rarity);
-      if (ra !== rb) return ra - rb;
-      return String(a.name || "").localeCompare(String(b.name || ""), "en");
-    });
+
+  if (sortMode === "color" || sortMode === "type" || sortMode === "rarity") {
+    const groups = new Map();
+    for (const it of list) {
+      const info =
+        sortMode === "color"
+          ? getColorGroupInfo(it.colors)
+          : sortMode === "type"
+            ? getTypeGroupInfo(it.type_line)
+            : getRarityGroupInfo(it.rarity);
+      if (!groups.has(info.label)) {
+        groups.set(info.label, { rank: info.rank, title: info.label, items: [] });
+      }
+      groups.get(info.label).items.push(it);
+    }
+    return Array.from(groups.values())
+      .sort((a, b) => a.rank - b.rank)
+      .map((g) => ({
+        title: g.title,
+        items: g.items.sort(compareByCollectorNumber),
+      }));
   }
-  if (sortMode === "color") {
-    return arr.sort((a, b) => {
-      const ca = getColorSortRank(a.colors);
-      const cb = getColorSortRank(b.colors);
-      if (ca !== cb) return ca - cb;
-      return String(a.name || "").localeCompare(String(b.name || ""), "en");
-    });
-  }
-  if (sortMode === "type") {
-    return arr.sort((a, b) => {
-      const ta = getTypeSortRank(a.type_line);
-      const tb = getTypeSortRank(b.type_line);
-      if (ta !== tb) return ta - tb;
-      return String(a.name || "").localeCompare(String(b.name || ""), "en");
-    });
-  }
-  // Default: numero di espansione (collector number)
-  return arr.sort((a, b) => {
-    const [na, sa] = parseCollectorNumSort(a.collector_number);
-    const [nb, sbStr] = parseCollectorNumSort(b.collector_number);
-    if (na !== nb) return na - nb;
-    if (sa !== sbStr) return sa.localeCompare(sbStr);
-    return String(a.name || "").localeCompare(String(b.name || ""), "en");
-  });
+
+  // Default: numero di collezione
+  return [{ title: null, items: list.slice().sort(compareByCollectorNumber) }];
 }
 
 window.openCollectionSet = function (setCode) {
@@ -4358,7 +4375,7 @@ function renderCollectionList() {
   if (!container) return;
 
   if (!myCollectionItems.length) {
-    if ($("col-shown-count")) $("col-shown-count").textContent = "0 cards";
+    container.classList.remove("in-set-view");
     container.innerHTML = `<p class="muted">Your collection is empty. Tap + to add cards, Import a CSV, or use the Scanner tab.</p>`;
     return;
   }
@@ -4367,6 +4384,8 @@ function renderCollectionList() {
 
   // 1) VISTA INIZIALE: LISTA ESPANSIONI
   if (!colActiveSetCode) {
+    container.classList.remove("in-set-view");
+
     const bySet = new Map();
     for (const it of filtered) {
       const code = String(it.set_code || "OTHER").toUpperCase();
@@ -4391,12 +4410,8 @@ function renderCollectionList() {
       a.name.localeCompare(b.name, "en")
     );
 
-    if ($("col-shown-count")) {
-      $("col-shown-count").textContent = `${setsList.length} sets`;
-    }
-
     if (!setsList.length) {
-      container.innerHTML = `<p class="muted">No sets match the current filters.</p>`;
+      container.innerHTML = `<p class="muted">No sets match your search.</p>`;
       return;
     }
 
@@ -4417,16 +4432,13 @@ function renderCollectionList() {
   }
 
   // 2) VISTA ESPANSIONE APERTA: CARTE DEL SET SELEZIONATO
-  const shownCopies = filtered.reduce((s, it) => s + Math.max(1, Number(it.quantity || 1)), 0);
+  container.classList.add("in-set-view");
+
   const setVal = filtered.reduce((s, it) => {
     const p = getCollectionUnitPrice(it);
     return s + (p !== null ? p * Math.max(1, Number(it.quantity || 1)) : 0);
   }, 0);
   const setName = filtered[0]?.set_name || colActiveSetCode;
-
-  if ($("col-shown-count")) {
-    $("col-shown-count").textContent = `${shownCopies} cards (${filtered.length} entries)`;
-  }
 
   const backBarHtml = `
     <div class="col-active-set-bar">
@@ -4440,69 +4452,90 @@ function renderCollectionList() {
   `;
 
   if (!filtered.length) {
-    container.innerHTML = `${backBarHtml}<p class="muted">No cards in this set match the current filters.</p>`;
+    container.innerHTML = `${backBarHtml}<p class="muted">No cards in this set.</p>`;
     return;
   }
 
-  const sortMode = $("col-sort-select")?.value || "set";
-  const sorted = sortCollectionSlice(filtered, sortMode);
+  const sections = buildCollectionSections(filtered, colSortMode);
+
+  const renderSectionDivider = (sec) => {
+    if (!sec.title) return "";
+    const count = sec.items.reduce((s, it) => s + Math.max(1, Number(it.quantity || 1)), 0);
+    return `
+      <div class="col-group-divider">
+        <span class="col-group-divider-label">${escapeHtml(sec.title)}</span>
+        <span class="col-group-divider-line"></span>
+        <span class="col-group-divider-count">${count}</span>
+      </div>
+    `;
+  };
 
   if (colViewMode === "grid") {
-    const tiles = sorted
-      .map((it) => {
-        const qty = Math.max(1, Number(it.quantity || 1));
-        const img = it.card_image_url || toNormalCardUrl(it.image_url || "");
-        const p = getCollectionUnitPrice(it);
-        const priceTxt = p !== null ? formatEur(p * qty) : "";
-        return `
-          <div class="col-grid-tile ${it.foil ? "is-foil" : ""}">
-            <div class="col-grid-img-wrap" onclick="openCollectionCardDetail('${escapeHtml(it.id)}')">
-              ${img ? `<img src="${escapeHtml(img)}" alt="${escapeHtml(it.name || "")}" loading="lazy" />` : `<div class="deck-stack-fallback">${escapeHtml(it.name || "")}</div>`}
-              ${it.foil ? `<span class="col-foil-overlay-badge">FOIL</span>` : ""}
-              <span class="col-qty-overlay-badge" data-col-qty-id="${escapeHtml(it.id)}">${qty}x</span>
-              ${priceTxt ? `<span class="col-price-overlay-badge" data-col-price-id="${escapeHtml(it.id)}">${priceTxt}</span>` : ""}
-            </div>
-            <div class="col-grid-card-name" onclick="openCollectionCardDetail('${escapeHtml(it.id)}')">${escapeHtml(it.name || "")}</div>
-          </div>
-        `;
+    const html = sections
+      .map((sec) => {
+        const tiles = sec.items
+          .map((it) => {
+            const qty = Math.max(1, Number(it.quantity || 1));
+            const img = it.card_image_url || toNormalCardUrl(it.image_url || "");
+            const p = getCollectionUnitPrice(it);
+            const priceTxt = p !== null ? formatEur(p * qty) : "";
+            return `
+              <div class="col-grid-tile ${it.foil ? "is-foil" : ""}">
+                <div class="col-grid-img-wrap" onclick="openCollectionCardDetail('${escapeHtml(it.id)}')">
+                  ${img ? `<img src="${escapeHtml(img)}" alt="${escapeHtml(it.name || "")}" loading="lazy" />` : `<div class="deck-stack-fallback">${escapeHtml(it.name || "")}</div>`}
+                  ${it.foil ? `<span class="col-foil-overlay-badge">FOIL</span>` : ""}
+                  <span class="col-qty-overlay-badge" data-col-qty-id="${escapeHtml(it.id)}">${qty}x</span>
+                  ${priceTxt ? `<span class="col-price-overlay-badge" data-col-price-id="${escapeHtml(it.id)}">${priceTxt}</span>` : ""}
+                </div>
+                <div class="col-grid-card-name" onclick="openCollectionCardDetail('${escapeHtml(it.id)}')">${escapeHtml(it.name || "")}</div>
+              </div>
+            `;
+          })
+          .join("");
+        return `${renderSectionDivider(sec)}<div class="col-grid">${tiles}</div>`;
       })
       .join("");
-    container.innerHTML = `${backBarHtml}<div class="col-grid">${tiles}</div>`;
+    container.innerHTML = `${backBarHtml}${html}`;
     return;
   }
 
-  const rows = sorted
-    .map((it) => {
-      const qty = Math.max(1, Number(it.quantity || 1));
-      const p = getCollectionUnitPrice(it);
-      const priceTxt = p !== null ? formatEur(p * qty) : "";
-      const rarCls = String(it.rarity || "common").toLowerCase();
-      const setMeta = `${String(it.set_code || "").toUpperCase()}${it.collector_number ? ` #${it.collector_number}` : ""}`;
-      return `
-        <div class="deck-card-row">
-          <div class="deck-card-main" onclick="openCollectionCardDetail('${escapeHtml(it.id)}')">
-            <div class="deck-card-name-line">
-              <span class="col-rarity-dot ${escapeHtml(rarCls)}"></span>
-              <span class="deck-card-name">${escapeHtml(it.name || "")}</span>
-              ${it.foil ? `<span class="col-foil-pill">FOIL</span>` : ""}
+  const html = sections
+    .map((sec) => {
+      const rows = sec.items
+        .map((it) => {
+          const qty = Math.max(1, Number(it.quantity || 1));
+          const p = getCollectionUnitPrice(it);
+          const priceTxt = p !== null ? formatEur(p * qty) : "";
+          const rarCls = String(it.rarity || "common").toLowerCase();
+          const setMeta = `${String(it.set_code || "").toUpperCase()}${it.collector_number ? ` #${it.collector_number}` : ""}`;
+          return `
+            <div class="deck-card-row">
+              <div class="deck-card-main" onclick="openCollectionCardDetail('${escapeHtml(it.id)}')">
+                <div class="deck-card-name-line">
+                  <span class="col-rarity-dot ${escapeHtml(rarCls)}"></span>
+                  <span class="deck-card-name">${escapeHtml(it.name || "")}</span>
+                  ${it.foil ? `<span class="col-foil-pill">FOIL</span>` : ""}
+                </div>
+                <div class="deck-card-subline">
+                  <span class="muted" style="font-size:11px;">${escapeHtml(setMeta)}</span>
+                  ${renderManaPipsHtml(it.mana_cost) ? `<div class="deck-card-mana">${renderManaPipsHtml(it.mana_cost)}</div>` : ""}
+                  ${priceTxt ? `<span class="card-price-inline" data-col-price-id="${escapeHtml(it.id)}">${priceTxt}</span>` : ""}
+                </div>
+              </div>
+              <div class="deck-qty-controls">
+                <button type="button" class="deck-qty-btn" onclick="changeCollectionQty('${escapeHtml(it.id)}', -1)">−</button>
+                <span class="deck-qty-num" data-col-qty-id="${escapeHtml(it.id)}">${qty}</span>
+                <button type="button" class="deck-qty-btn" onclick="changeCollectionQty('${escapeHtml(it.id)}', 1)">+</button>
+              </div>
             </div>
-            <div class="deck-card-subline">
-              <span class="muted" style="font-size:11px;">${escapeHtml(setMeta)}</span>
-              ${renderManaPipsHtml(it.mana_cost) ? `<div class="deck-card-mana">${renderManaPipsHtml(it.mana_cost)}</div>` : ""}
-              ${priceTxt ? `<span class="card-price-inline" data-col-price-id="${escapeHtml(it.id)}">${priceTxt}</span>` : ""}
-            </div>
-          </div>
-          <div class="deck-qty-controls">
-            <button type="button" class="deck-qty-btn" onclick="changeCollectionQty('${escapeHtml(it.id)}', -1)">−</button>
-            <span class="deck-qty-num" data-col-qty-id="${escapeHtml(it.id)}">${qty}</span>
-            <button type="button" class="deck-qty-btn" onclick="changeCollectionQty('${escapeHtml(it.id)}', 1)">+</button>
-          </div>
-        </div>
-      `;
+          `;
+        })
+        .join("");
+      return `${renderSectionDivider(sec)}${rows}`;
     })
     .join("");
 
-  container.innerHTML = `${backBarHtml}${rows}`;
+  container.innerHTML = `${backBarHtml}${html}`;
 }
 
 window.changeCollectionQty = async function (itemId, delta) {
@@ -4569,7 +4602,30 @@ window.changeCollectionQty = async function (itemId, delta) {
 
 // Filter & View event listeners
 $("col-search-input")?.addEventListener("input", renderCollectionList);
-$("col-sort-select")?.addEventListener("change", renderCollectionList);
+$("btn-col-sort-trigger")?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  $("col-sort-menu")?.classList.toggle("hidden");
+});
+
+document.querySelectorAll(".col-dropup-item").forEach((btn) => {
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    colSortMode = btn.dataset.sort || "set";
+    if ($("col-sort-label")) $("col-sort-label").textContent = `Sort: ${btn.textContent}`;
+    document.querySelectorAll(".col-dropup-item").forEach((b) => b.classList.toggle("active", b === btn));
+    $("col-sort-menu")?.classList.add("hidden");
+    renderCollectionList();
+  });
+});
+
+document.addEventListener("click", (e) => {
+  const wrap = $("col-sort-dropup");
+  const menu = $("col-sort-menu");
+  if (!wrap || !menu || menu.classList.contains("hidden")) return;
+  if (!wrap.contains(e.target)) {
+    menu.classList.add("hidden");
+  }
+});
 
 $("btn-col-view-list")?.addEventListener("click", () => {
   colViewMode = "list";
