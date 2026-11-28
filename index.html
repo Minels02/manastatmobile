@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>ManaStat Companion</title>
   <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="style.css?v=18" />
+  <link rel="stylesheet" href="style.css?v=19" />
 </head>
 <body>
   <div id="app">
@@ -467,6 +467,7 @@
               <div class="col-header-actions">
                 <button id="btn-open-col-import" type="button" class="deck-import-open-btn">Import</button>
                 <button id="btn-open-col-add" type="button" class="btn-circle-plus" title="Add Card">+</button>
+                <div class="col-search-divider"></div>
               </div>
             </div>
 
@@ -480,7 +481,7 @@
               <div class="col-kpi-box">
                 <div class="col-kpi-label">Value</div>
                 <div id="col-kpi-value" class="col-kpi-val green">€ 0.00</div>
-                <div id="col-kpi-foil" class="col-kpi-sub">0 foil</div>
+                
               </div>
               <div class="col-kpi-box">
                 <div class="col-kpi-label">Sets</div>
@@ -506,13 +507,19 @@
 
         <!-- BARRA FLOTTANTE IN BASSO (visibile dentro un'espansione) -->
         <div id="col-floating-bar" class="col-floating-bar hidden">
-          <select id="col-sort-select" class="col-floating-sort" aria-label="Sort cards">
-            <option value="set">Sort: Number (#)</option>
-            <option value="price">Sort: Price</option>
-            <option value="rarity">Sort: Rarity</option>
-            <option value="color">Sort: Color</option>
-            <option value="type">Sort: Type</option>
-          </select>
+          <div id="col-sort-dropup" class="col-dropup">
+            <button type="button" id="btn-col-sort-trigger" class="col-dropup-btn">
+              <span id="col-sort-label">Sort: Number (#)</span>
+              <span class="col-dropup-arrow">▴</span>
+            </button>
+            <div id="col-sort-menu" class="col-dropup-menu hidden">
+              <button type="button" class="col-dropup-item active" data-sort="set">Number (#)</button>
+              <button type="button" class="col-dropup-item" data-sort="price">Price</button>
+              <button type="button" class="col-dropup-item" data-sort="rarity">Rarity</button>
+              <button type="button" class="col-dropup-item" data-sort="color">Color</button>
+              <button type="button" class="col-dropup-item" data-sort="type">Type</button>
+            </div>
+          </div>
           <div class="seg-control">
             <button type="button" id="btn-col-view-list" class="seg-btn active">List</button>
             <button type="button" id="btn-col-view-grid" class="seg-btn">Grid</button>
@@ -763,6 +770,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="app.js?v=18"></script>
+  <script src="app.js?v=19"></script>
 </body>
 </html>
