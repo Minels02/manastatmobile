@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>ManaStat Companion</title>
   <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="style.css?v=17" />
+  <link rel="stylesheet" href="style.css?v=18" />
 </head>
 <body>
   <div id="app">
@@ -460,7 +460,6 @@
       <!-- TAB: COLLECTION -->
       <section id="tab-my-collection" class="tab-panel">
         <div class="card">
-       
           <!-- PARTE ALTA: visibile solo nella lista espansioni -->
           <div id="col-overview-top">
             <div class="decks-list-header">
@@ -490,7 +489,7 @@
               </div>
             </div>
 
-            <!-- SEARCH & FILTERS -->
+            <!-- SEARCH -->
             <div class="deck-search-row" style="margin-top:8px;">
               <input
                 id="col-search-input"
@@ -498,98 +497,26 @@
                 placeholder="Search name, set, #number..."
                 autocomplete="off"
               />
-              <button id="btn-col-toggle-filters" type="button" class="btn small">Filters</button>
-            </div>
-          </div>
-
-          <!-- COLLAPSIBLE FILTERS PANEL -->
-          <div id="col-filters-panel" class="col-filters-panel hidden">
-            <div class="row-2">
-              <div>
-                <label for="col-filter-number" style="margin-top:4px;">Collector #</label>
-                <input id="col-filter-number" type="text" placeholder="e.g. 142" autocomplete="off" />
-              </div>
-              <div>
-                <label for="col-filter-price" style="margin-top:4px;">Price</label>
-                <select id="col-filter-price">
-                  <option value="ALL">All Prices</option>
-                  <option value="lt1">&lt; € 1</option>
-                  <option value="1to5">€ 1 – € 5</option>
-                  <option value="5to20">€ 5 – € 20</option>
-                  <option value="gt20">&gt; € 20</option>
-                </select>
-              </div>
-            </div>
-            <div class="row-2">
-              <div>
-                <label for="col-filter-rarity" style="margin-top:6px;">Rarity</label>
-                <select id="col-filter-rarity">
-                  <option value="ALL">All Rarities</option>
-                  <option value="mythic">Mythic</option>
-                  <option value="rare">Rare</option>
-                  <option value="uncommon">Uncommon</option>
-                  <option value="common">Common</option>
-                </select>
-              </div>
-              <div>
-                <label for="col-filter-color" style="margin-top:6px;">Color</label>
-                <select id="col-filter-color">
-                  <option value="ALL">All Colors</option>
-                  <option value="W">White</option>
-                  <option value="U">Blue</option>
-                  <option value="B">Black</option>
-                  <option value="R">Red</option>
-                  <option value="G">Green</option>
-                  <option value="C">Colorless</option>
-                  <option value="M">Multicolor</option>
-                </select>
-              </div>
-            </div>
-            <div class="row-2">
-              <div>
-                <label for="col-filter-type" style="margin-top:6px;">Type</label>
-                <select id="col-filter-type">
-                  <option value="ALL">All Types</option>
-                  <option value="creature">Creature</option>
-                  <option value="instant">Instant</option>
-                  <option value="sorcery">Sorcery</option>
-                  <option value="artifact">Artifact</option>
-                  <option value="enchantment">Enchantment</option>
-                  <option value="planeswalker">Planeswalker</option>
-                  <option value="land">Land</option>
-                  <option value="battle">Battle</option>
-                </select>
-              </div>
-              <div>
-                <label for="col-sort-select" style="margin-top:6px;">Sort by</label>
-                <select id="col-sort-select">
-                  <option value="set">Set / #</option>
-                  <option value="alpha">Name A–Z</option>
-                  <option value="price">Price High–Low</option>
-                  <option value="rarity">Rarity</option>
-                  <option value="qty">Quantity</option>
-                </select>
-              </div>
-            </div>
-            <button id="btn-col-reset-filters" type="button" class="btn small" style="margin-top:8px;width:100%;">
-              Reset Filters
-            </button>
-          </div>
-
-          <!-- TOOLBAR: VIEW MODE + COUNT -->
-          <div class="col-toolbar-row">
-            <span id="col-shown-count" class="muted" style="font-size:12px;">0 cards</span>
-            <div style="display:flex;align-items:center;gap:6px;">
-              <button id="btn-col-set-filters" type="button" class="btn small hidden" style="padding:5px 10px;">Filters</button>
-              <div class="seg-control">
-                <button type="button" id="btn-col-view-list" class="seg-btn active">List</button>
-                <button type="button" id="btn-col-view-grid" class="seg-btn">Grid</button>
-              </div>
             </div>
           </div>
 
           <p id="col-page-status" class="status"></p>
           <div id="col-cards-container" class="col-cards-container"></div>
+        </div>
+
+        <!-- BARRA FLOTTANTE IN BASSO (visibile dentro un'espansione) -->
+        <div id="col-floating-bar" class="col-floating-bar hidden">
+          <select id="col-sort-select" class="col-floating-sort" aria-label="Sort cards">
+            <option value="set">Sort: Number (#)</option>
+            <option value="price">Sort: Price</option>
+            <option value="rarity">Sort: Rarity</option>
+            <option value="color">Sort: Color</option>
+            <option value="type">Sort: Type</option>
+          </select>
+          <div class="seg-control">
+            <button type="button" id="btn-col-view-list" class="seg-btn active">List</button>
+            <button type="button" id="btn-col-view-grid" class="seg-btn">Grid</button>
+          </div>
         </div>
         
 
@@ -836,6 +763,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="app.js?v=17"></script>
+  <script src="app.js?v=18"></script>
 </body>
 </html>
