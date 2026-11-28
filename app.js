@@ -20,7 +20,7 @@ const DEFAULT_SCANNER_WS_URL = "wss://manastat-scanner-server.onrender.com/ws/sc
 const STORAGE_SETS_KEY = "manastat_scanner_selected_sets";
 
 // Badge versione sempre visibile sopra la barra di navigazione
-const APP_UI_VERSION = "v3.6";
+const APP_UI_VERSION = "v3.7";
 let connectedServerVersion = "";
 
 function renderVersionBadge() {
@@ -4260,19 +4260,45 @@ function updateCollectionKpis() {
 
 function getFilteredCollectionItems() {
   const q = ($("col-search-input")?.value || "").trim().toLowerCase();
-  const setFilter = colActiveSetCode || $("col-filter-set")?.value || "ALL";
+  const numFilter = ($("col-filter-number")?.value || "").trim().toLowerCase();
+  const priceFilter = $("col-filter-price")?.value || "ALL";
   const rarityFilter = $("col-filter-rarity")?.value || "ALL";
-  const finishFilter = $("col-filter-finish")?.value || "ALL";
+  const colorFilter = $("col-filter-color")?.value || "ALL";
+  const typeFilter = $("col-filter-type")?.value || "ALL";
 
   return myCollectionItems.filter((it) => {
+    if (colActiveSetCode && String(it.set_code || "").toUpperCase() !== colActiveSetCode) {
+      return false;
+    }
     if (q) {
       const hay = `${it.name || ""} ${it.set_name || ""} ${it.set_code || ""} ${it.collector_number || ""} ${it.type_line || ""}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
-    if (setFilter !== "ALL" && String(it.set_code || "").toUpperCase() !== setFilter) return false;
-    if (rarityFilter !== "ALL" && String(it.rarity || "").toLowerCase() !== rarityFilter) return false;
-    if (finishFilter === "foil" && !it.foil) return false;
-    if (finishFilter === "nonfoil" && it.foil) return false;
+    if (numFilter) {
+      const cn = String(it.collector_number || "").toLowerCase();
+      if (!cn.includes(numFilter)) return false;
+    }
+    if (priceFilter !== "ALL") {
+      const p = getCollectionUnitPrice(it);
+      if (p === null) return false;
+      if (priceFilter === "lt1" && !(p < 1)) return false;
+      if (priceFilter === "1to5" && !(p >= 1 && p <= 5)) return false;
+      if (priceFilter === "5to20" && !(p > 5 && p <= 20)) return false;
+      if (priceFilter === "gt20" && !(p > 20)) return false;
+    }
+    if (rarityFilter !== "ALL" && String(it.rarity || "").toLowerCase() !== rarityFilter) {
+      return false;
+    }
+    if (colorFilter !== "ALL") {
+      const cols = Array.isArray(it.colors) ? it.colors.map((c) => String(c).toUpperCase()) : [];
+      if (colorFilter === "C" && cols.length !== 0) return false;
+      if (colorFilter === "M" && cols.length < 2) return false;
+      if (["W", "U", "B", "R", "G"].includes(colorFilter) && !cols.includes(colorFilter)) return false;
+    }
+    if (typeFilter !== "ALL") {
+      const tl = String(it.type_line || "").toLowerCase();
+      if (!tl.includes(typeFilter)) return false;
+    }
     return true;
   });
 }
@@ -4318,11 +4344,18 @@ function sortCollectionSlice(list, sortMode) {
 
 window.openCollectionSet = function (setCode) {
   colActiveSetCode = String(setCode || "").toUpperCase();
+  $("col-overview-top")?.classList.add("hidden");
+  $("btn-col-set-filters")?.classList.remove("hidden");
+  $("col-filters-panel")?.classList.add("hidden");
   renderCollectionList();
+  window.scrollTo({ top: 0, behavior: "instant" });
 };
 
 window.closeCollectionSet = function () {
   colActiveSetCode = null;
+  $("col-overview-top")?.classList.remove("hidden");
+  $("btn-col-set-filters")?.classList.add("hidden");
+  $("col-filters-panel")?.classList.add("hidden");
   renderCollectionList();
 };
 
@@ -4434,6 +4467,7 @@ function renderCollectionList() {
               ${it.foil ? `<span class="col-foil-overlay-badge">FOIL</span>` : ""}
               ${priceTxt ? `<span class="col-price-overlay-badge" data-col-price-id="${escapeHtml(it.id)}">${priceTxt}</span>` : ""}
             </div>
+            <div class="col-grid-card-name" onclick="openCollectionCardDetail('${escapeHtml(it.id)}')">${escapeHtml(it.name || "")}</div>
           </div>
         `;
       })
@@ -4540,20 +4574,40 @@ window.changeCollectionQty = async function (itemId, delta) {
 
 // Filter & View event listeners
 $("col-search-input")?.addEventListener("input", renderCollectionList);
-$("col-filter-set")?.addEventListener("change", renderCollectionList);
+$("col-filter-number")?.addEventListener("input", renderCollectionList);
+$("col-filter-price")?.addEventListener("change", renderCollectionList);
 $("col-filter-rarity")?.addEventListener("change", renderCollectionList);
-$("col-filter-finish")?.addEventListener("change", renderCollectionList);
+$("col-filter-color")?.addEventListener("change", renderCollectionList);
+$("col-filter-type")?.addEventListener("change", renderCollectionList);
 $("col-sort-select")?.addEventListener("change", renderCollectionList);
 
-$("btn-col-toggle-filters")?.addEventListener("click", () => {
+function toggleCollectionFiltersPanel(e) {
+  e?.stopPropagation();
   $("col-filters-panel")?.classList.toggle("hidden");
+}
+
+$("btn-col-toggle-filters")?.addEventListener("click", toggleCollectionFiltersPanel);
+$("btn-col-set-filters")?.addEventListener("click", toggleCollectionFiltersPanel);
+
+// Cliccando fuori dal pannello filtri, i filtri restano applicati e il pannello si chiude
+document.addEventListener("click", (e) => {
+  const panel = $("col-filters-panel");
+  if (!panel || panel.classList.contains("hidden")) return;
+  const btn1 = $("btn-col-toggle-filters");
+  const btn2 = $("btn-col-set-filters");
+  if (!panel.contains(e.target) && e.target !== btn1 && e.target !== btn2) {
+    panel.classList.add("hidden");
+    renderCollectionList();
+  }
 });
 
 $("btn-col-reset-filters")?.addEventListener("click", () => {
   if ($("col-search-input")) $("col-search-input").value = "";
-  if ($("col-filter-set")) $("col-filter-set").value = "ALL";
+  if ($("col-filter-number")) $("col-filter-number").value = "";
+  if ($("col-filter-price")) $("col-filter-price").value = "ALL";
   if ($("col-filter-rarity")) $("col-filter-rarity").value = "ALL";
-  if ($("col-filter-finish")) $("col-filter-finish").value = "ALL";
+  if ($("col-filter-color")) $("col-filter-color").value = "ALL";
+  if ($("col-filter-type")) $("col-filter-type").value = "ALL";
   if ($("col-sort-select")) $("col-sort-select").value = "set";
   renderCollectionList();
 });
