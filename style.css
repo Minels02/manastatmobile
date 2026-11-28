@@ -2699,6 +2699,9 @@ input[type="date"] {
 
 /* Spazio in fondo per non far coprire le ultime carte dalla barra flottante */
 .col-cards-container {
+  padding-bottom: 0;
+}
+.col-cards-container.in-set-view {
   padding-bottom: 74px;
 }
 
@@ -2806,4 +2809,100 @@ input[type="date"] {
   color: #f8fafc;
   border: 1px solid #333e57;
   border-radius: 8px;
+}
+
+
+/* Separatore tra barra di ricerca e lista espansioni */
+.col-search-divider {
+  height: 1px;
+  background: rgba(148, 163, 184, 0.2);
+  margin: 14px 0 12px;
+}
+
+/* Separatore tra categorie (Colore, Tipo, Rarità) */
+.col-group-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 14px 0 8px;
+}
+.col-group-divider:first-of-type {
+  margin-top: 4px;
+}
+.col-group-divider-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #93c5fd;
+  white-space: nowrap;
+}
+.col-group-divider-line {
+  flex: 1;
+  height: 1px;
+  background: rgba(148, 163, 184, 0.22);
+}
+.col-group-divider-count {
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+}
+
+/* Menu a tendina verso l'alto (Drop-up) nello stile dell'app */
+.col-dropup {
+  position: relative;
+  flex: 1;
+}
+.col-dropup-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 11px;
+  font-size: 13px;
+  font-weight: 600;
+  background: #1c2230;
+  color: #f8fafc;
+  border: 1px solid #333e57;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.col-dropup-btn:active {
+  border-color: #3b82f6;
+}
+.col-dropup-arrow {
+  font-size: 11px;
+  color: #93c5fd;
+}
+.col-dropup-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 45;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 6px;
+  background: #171c26;
+  border: 1px solid #3b4763;
+  border-radius: 10px;
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.65);
+}
+.col-dropup-item {
+  width: 100%;
+  text-align: left;
+  padding: 9px 10px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: #e2e8f0;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.col-dropup-item.active {
+  background: #2e86de;
+  color: #ffffff;
 }
