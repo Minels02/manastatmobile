@@ -2622,110 +2622,6 @@ input[type="date"] {
   margin-top: 6px;
 }
 
-/* Lista espansioni (schermata iniziale Collezione) */
-.col-set-card {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 12px 14px;
-  margin-bottom: 8px;
-  background: #181c26;
-  border: 1px solid #2b3245;
-  border-radius: 10px;
-  cursor: pointer;
-}
-.col-set-card:active {
-  background: #202636;
-}
-.col-set-card-left {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-.col-set-card-name {
-  font-weight: 600;
-  font-size: 14px;
-  color: #f3f6fc;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.col-set-card-meta {
-  font-size: 12px;
-  color: #9aa4bc;
-  white-space: nowrap;
-}
-
-/* Barra "Torna alle espansioni" dentro un set */
-.col-active-set-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 10px;
-  padding: 8px 10px;
-  background: #181c26;
-  border: 1px solid #2b3245;
-  border-radius: 10px;
-}
-.col-back-sets-btn {
-  background: #232a3b;
-  color: #eef2fa;
-  border: 1px solid #38435e;
-  border-radius: 8px;
-  padding: 6px 10px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-/* Griglia a 3 colonne più compatta */
-.col-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-}
-.col-grid-tile {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  background: transparent;
-  padding: 0;
-  border: none;
-}
-.col-grid-img-wrap {
-  position: relative;
-  width: 100%;
-  aspect-ratio: 63 / 88;
-  border-radius: 8px;
-  overflow: hidden;
-  cursor: pointer;
-}
-.col-grid-img-wrap img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-/* Prezzo nell'angolo in basso a destra dell'immagine */
-.col-price-overlay-badge {
-  position: absolute;
-  right: 4px;
-  bottom: 4px;
-  background: rgba(14, 18, 26, 0.86);
-  color: #7ee787;
-  border: 1px solid rgba(126, 231, 135, 0.35);
-  border-radius: 5px;
-  padding: 2px 5px;
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 1.1;
-  pointer-events: none;
-}
-
-
 /* Banner espansioni più spessi con nome che può andare a capo */
 .col-set-card {
   display: flex;
@@ -2765,10 +2661,10 @@ input[type="date"] {
   flex-shrink: 0;
 }
 
-/* Barra espansione aperta: resta fissa in cima quando scorri giù */
+/* Barra espansione aperta: fissa in cima con spazio dal bordo superiore */
 .col-active-set-bar {
   position: sticky;
-  top: 0;
+  top: calc(env(safe-area-inset-top, 0px) + 12px);
   z-index: 25;
   display: flex;
   align-items: center;
@@ -2779,7 +2675,7 @@ input[type="date"] {
   background: #141822;
   border: 1px solid #2b3245;
   border-radius: 10px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
 }
 .col-active-set-bar .col-set-name {
   font-size: 13px;
@@ -2799,6 +2695,11 @@ input[type="date"] {
   font-weight: 600;
   cursor: pointer;
   flex-shrink: 0;
+}
+
+/* Spazio in fondo per non far coprire le ultime carte dalla barra flottante */
+.col-cards-container {
+  padding-bottom: 74px;
 }
 
 /* Griglia a 3 colonne con nome carta sotto l'immagine */
@@ -2842,6 +2743,24 @@ input[type="date"] {
   overflow: hidden;
   cursor: pointer;
 }
+
+/* Badge numero copie (nx) in basso a sinistra nella vista Griglia */
+.col-qty-overlay-badge {
+  position: absolute;
+  left: 4px;
+  bottom: 4px;
+  background: rgba(14, 18, 26, 0.88);
+  color: #f8fafc;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  border-radius: 5px;
+  padding: 2px 5px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.1;
+  pointer-events: none;
+}
+
+/* Prezzo nell'angolo in basso a destra dell'immagine */
 .col-price-overlay-badge {
   position: absolute;
   right: 4px;
@@ -2855,4 +2774,36 @@ input[type="date"] {
   font-weight: 700;
   line-height: 1.1;
   pointer-events: none;
+}
+
+/* Barra flottante Sort + List/Grid sopra la barra di navigazione */
+.col-floating-bar {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+  z-index: 35;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  background: rgba(20, 24, 34, 0.94);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid #2e374d;
+  border-radius: 12px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.55);
+}
+
+.col-floating-sort {
+  flex: 1;
+  margin: 0;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  background: #1c2230;
+  color: #f8fafc;
+  border: 1px solid #333e57;
+  border-radius: 8px;
 }
