@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="it">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
@@ -9,39 +9,39 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>ManaStat Companion</title>
   <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="style.css?v=19" />
+  <link rel="stylesheet" href="style.css?v=20" />
 </head>
 <body>
   <div id="app">
     <!-- LOGIN -->
     <section id="login-view" class="card">
       <h1>ManaStat</h1>
-      <p class="muted">Accedi con lo stesso account dell'app desktop.</p>
+      <p class="muted">Sign in with the same account as the desktop app.</p>
       <label>Email</label>
-      <input id="email" type="email" placeholder="tu@esempio.com" autocomplete="email" />
+      <input id="email" type="email" placeholder="you@example.com" autocomplete="email" />
       <label>Password</label>
       <input id="password" type="password" placeholder="••••••••" autocomplete="current-password" />
-      <button id="btn-login" class="btn primary">Accedi</button>
+      <button id="btn-login" class="btn primary">Sign In</button>
       <p id="login-status" class="status"></p>
     </section>
 
-    <!-- APP PRINCIPALE -->
+    <!-- MAIN APP -->
     <main id="main-view" class="hidden">
-      <!-- TAB 1: MAZZI -->
+      <!-- TAB 1: DECKS -->
       <section id="tab-decks" class="tab-panel active">
         <div id="decks-list-view" class="card">
           <div class="decks-list-header">
-            <h2>I tuoi mazzi</h2>
-            <button id="btn-open-new-deck" type="button" class="btn-circle-plus" title="Nuovo mazzo">+</button>
+            <h2>My Decks</h2>
           </div>
           <div id="decks-format-filter" class="format-filter-bar hidden"></div>
           <div id="decks-list-container" class="deck-cards-list"></div>
           <p id="deck-list-status" class="status"></p>
+          <button id="btn-open-new-deck" type="button" class="fab-bottom-left" title="New Deck">+</button>
         </div>
 
         <div id="deck-detail-view" class="hidden">
           <div class="detail-header">
-            <button id="btn-back-to-decks" class="btn back-btn">← Tutti i mazzi</button>
+            <button id="btn-back-to-decks" class="btn back-btn">← All Decks</button>
             <div class="deck-detail-meta-right">
               <span id="deck-detail-count" class="muted"></span>
               <span id="deck-detail-price" class="deck-price-badge hidden"></span>
@@ -51,33 +51,33 @@
           <div id="deck-detail-hero" class="detail-hero">
             <div class="detail-hero-inner">
               <div class="deck-hero-title-row">
-                <h2 id="deck-detail-title">Mazzo</h2>
+                <h2 id="deck-detail-title">Deck</h2>
                 <span id="deck-detail-ci" class="deck-ci-icons"></span>
               </div>
               <div class="deck-hero-bottom-row">
-                <span id="deck-detail-format" class="badge">Formato</span>
-                <button id="btn-delete-deck" type="button" class="deck-delete-btn">Elimina mazzo</button>
+                <span id="deck-detail-format" class="badge">Format</span>
+                <button id="btn-delete-deck" type="button" class="deck-delete-btn">Delete Deck</button>
               </div>
             </div>
           </div>
 
-          <!-- SOTTO-TAB DEL MAZZO -->
+          <!-- DECK SUB-TABS -->
           <div class="deck-subtabs" role="tablist">
-            <button type="button" class="deck-subtab-btn active" data-subtab="deck-sub-stats">Statistiche</button>
-            <button type="button" class="deck-subtab-btn" data-subtab="deck-sub-cards">Lista</button>
-            <button type="button" class="deck-subtab-btn" data-subtab="deck-sub-matches">Partite</button>
+            <button type="button" class="deck-subtab-btn active" data-subtab="deck-sub-stats">Stats</button>
+            <button type="button" class="deck-subtab-btn" data-subtab="deck-sub-cards">Cards</button>
+            <button type="button" class="deck-subtab-btn" data-subtab="deck-sub-matches">Matches</button>
           </div>
 
-          <!-- SOTTO-TAB 1: STATISTICHE (SOLO GRAFICI) -->
+          <!-- SUB-TAB 1: STATS -->
           <div id="deck-sub-stats" class="deck-subpanel active">
             <div class="card">
-              <h3>Vittorie / Sconfitte</h3>
+              <h3>Wins / Losses</h3>
               <div id="deck-pie-container" class="deck-chart-box"></div>
             </div>
 
             <div class="card">
-              <h3>Andamento Winrate nel tempo</h3>
-              <div id="deck-trend-detail" class="trend-detail-bar muted">Tocca un punto per i dettagli</div>
+              <h3>Winrate Trend</h3>
+              <div id="deck-trend-detail" class="trend-detail-bar muted">Tap a point for details</div>
               <div id="deck-trend-shell" class="trend-chart-shell">
                 <div class="trend-y-axis">
                   <span>100%</span>
@@ -91,21 +91,21 @@
             </div>
           </div>
 
-          <!-- SOTTO-TAB 2: LISTA CARTE -->
+          <!-- SUB-TAB 2: CARD LIST -->
           <div id="deck-sub-cards" class="deck-subpanel hidden">
             <div id="deck-search-card" class="card">
               <div class="deck-search-header">
-                <h3>Aggiungi carta</h3>
-                <button id="btn-open-import-deck" type="button" class="deck-import-open-btn">Importa lista</button>
+                <h3>Add Card</h3>
+                <button id="btn-open-import-deck" type="button" class="deck-import-open-btn">Import List</button>
               </div>
               <div class="deck-search-row">
                 <input
                   id="deck-card-search-input"
                   type="text"
-                  placeholder="Cerca carta su Scryfall (es. Sol Ring)..."
+                  placeholder="Search card on Scryfall (e.g. Sol Ring)..."
                   autocomplete="off"
                 />
-                <button id="btn-deck-card-search" type="button" class="btn primary small">Cerca</button>
+                <button id="btn-deck-card-search" type="button" class="btn primary small">Search</button>
               </div>
               <div id="deck-search-dropdown" class="hidden">
                 <p id="deck-search-status" class="status"></p>
@@ -113,20 +113,20 @@
               </div>
             </div>
 
-            <!-- BARRA CONTROLLI: TIPO/TAG + ORDINE + LISTA/GRIGLIA -->
+            <!-- CONTROLS: TYPE/TAG + SORT + LIST/GRID -->
             <div class="deck-list-toolbar">
               <div class="seg-control">
-                <button type="button" id="btn-group-type" class="seg-btn active">Tipo</button>
+                <button type="button" id="btn-group-type" class="seg-btn active">Type</button>
                 <button type="button" id="btn-group-tag" class="seg-btn">Tag</button>
               </div>
-              <select id="deck-sort-select" class="deck-sort-select" aria-label="Ordina carte">
+              <select id="deck-sort-select" class="deck-sort-select" aria-label="Sort cards">
                 <option value="alpha">A–Z</option>
                 <option value="cmc">CMC</option>
-                <option value="price">Prezzo</option>
+                <option value="price">Price</option>
               </select>
               <div class="seg-control">
-                <button type="button" id="btn-view-list" class="seg-btn active">Lista</button>
-                <button type="button" id="btn-view-grid" class="seg-btn">Griglia</button>
+                <button type="button" id="btn-view-list" class="seg-btn active">List</button>
+                <button type="button" id="btn-view-grid" class="seg-btn">Grid</button>
               </div>
             </div>
 
@@ -136,30 +136,30 @@
             </div>
           </div>
 
-          <!-- SOTTO-TAB 3: PARTITE & STORICO -->
+          <!-- SUB-TAB 3: MATCHES & HISTORY -->
           <div id="deck-sub-matches" class="deck-subpanel hidden">
             <div class="card deck-match-form-card">
-              <h3>Registra partita</h3>
+              <h3>Log Match</h3>
               <div class="row-2">
                 <div>
-                  <label>Partite giocate</label>
+                  <label>Matches Played</label>
                   <input id="deck-matches" type="number" min="1" value="1" />
                 </div>
                 <div>
-                  <label>Vittorie</label>
+                  <label>Wins</label>
                   <input id="deck-wins" type="number" min="0" value="0" />
                 </div>
               </div>
 
-              <label>Data</label>
+              <label>Date</label>
               <input id="deck-date" type="date" class="deck-date-input" />
 
-              <button id="btn-save-deck-match" class="btn primary">Salva partita su mazzo</button>
+              <button id="btn-save-deck-match" class="btn primary">Save Match</button>
               <p id="deck-status" class="status"></p>
             </div>
 
             <div class="card">
-              <h3>Storico sessioni</h3>
+              <h3>Session History</h3>
               <div id="deck-history-list" class="deck-history-list"></div>
             </div>
           </div>
@@ -222,12 +222,13 @@
             </div>
           </div>
         </div>
-        <!-- MODAL: IMPORTA LISTA MAZZO -->
+
+        <!-- MODAL: IMPORT DECKLIST -->
         <div id="import-deck-modal" class="proposal-overlay hidden">
           <div class="proposal-card modal-scroll-card">
-            <h2>Importa lista mazzo</h2>
+            <h2>Import Decklist</h2>
             <p class="muted" style="margin-top:0;">
-              Incolla una lista da Moxfield, Archidekt, ManaBox o testo semplice (es. <code>1 Sol Ring</code> o <code>1 Sol Ring (CMM) 410</code>).
+              Paste a list from Moxfield, Archidekt, ManaBox, or plain text (e.g. <code>1 Sol Ring</code> or <code>1 Sol Ring (CMM) 410</code>).
             </p>
             <textarea
               id="import-deck-textarea"
@@ -239,28 +240,28 @@
             <div class="import-mode-row">
               <label class="import-radio">
                 <input type="radio" name="import-deck-mode" value="merge" checked />
-                <span>Aggiungi alla lista</span>
+                <span>Add to list</span>
               </label>
               <label class="import-radio">
                 <input type="radio" name="import-deck-mode" value="replace" />
-                <span>Sostituisci lista</span>
+                <span>Replace list</span>
               </label>
             </div>
 
             <p id="import-deck-status" class="status"></p>
             <div class="proposal-actions">
-              <button id="btn-cancel-import-deck" type="button" class="btn">Annulla</button>
-              <button id="btn-run-import-deck" type="button" class="btn primary">Importa</button>
+              <button id="btn-cancel-import-deck" type="button" class="btn">Cancel</button>
+              <button id="btn-run-import-deck" type="button" class="btn primary">Import</button>
             </div>
           </div>
         </div>
 
-        <!-- MODAL: DETTAGLIO CARTA (INFO, EDIZIONE, PROXY, TAG) -->
+        <!-- MODAL: CARD DETAIL (INFO, EDITION, PROXY, TAGS) -->
         <div id="card-preview-modal" class="proposal-overlay hidden">
           <div class="proposal-card card-detail-modal">
             <div class="card-detail-top">
               <div class="card-detail-img-wrap">
-                <img id="card-preview-img" src="" alt="Carta" class="card-preview-img" />
+                <img id="card-preview-img" src="" alt="Card" class="card-preview-img" />
                 <span id="card-preview-proxy-badge" class="proxy-overlay-badge hidden">PROXY</span>
               </div>
               <div class="card-detail-head">
@@ -281,38 +282,38 @@
             <div id="card-preview-oracle" class="card-oracle-box"></div>
 
             <div class="card-detail-section">
-              <label for="card-edition-select">Espansione / Stampa</label>
+              <label for="card-edition-select">Edition / Printing</label>
               <select id="card-edition-select">
-                <option value="">Caricamento edizioni...</option>
+                <option value="">Loading editions...</option>
               </select>
             </div>
 
             <label class="card-proxy-toggle">
               <input id="card-proxy-chk" type="checkbox" />
-              <span>Segna questa carta come <strong>Proxy</strong></span>
+              <span>Mark this card as <strong>Proxy</strong></span>
             </label>
 
             <div class="card-detail-section">
-              <label>Tag della carta</label>
+              <label>Card Tags</label>
               <div id="card-tags-chips" class="tags-chips-wrap"></div>
               <div class="deck-search-row" style="margin-top:6px;">
-                <input id="card-tag-input" type="text" placeholder="Nuovo tag (es. Ramp, Removal)..." autocomplete="off" />
+                <input id="card-tag-input" type="text" placeholder="New tag (e.g. Ramp, Removal)..." autocomplete="off" />
                 <button id="btn-add-card-tag" type="button" class="btn primary small">+</button>
               </div>
               <div id="card-tag-suggestions" class="tags-suggestions-wrap"></div>
             </div>
 
             <p id="card-detail-status" class="status"></p>
-            <button id="btn-close-card-preview" type="button" class="btn primary">Chiudi</button>
+            <button id="btn-close-card-preview" type="button" class="btn primary">Close</button>
           </div>
         </div>
       </section>
+
       <!-- TAB 2: GROUPS -->
       <section id="tab-groups" class="tab-panel">
         <div id="groups-list-view" class="card">
           <div class="decks-list-header">
             <h2>My Groups</h2>
-            <button id="btn-open-new-group" type="button" class="btn-circle-plus" title="New Group">+</button>
           </div>
 
           <input
@@ -331,6 +332,7 @@
 
           <div id="groups-list-container" class="group-list"></div>
           <p id="group-list-status" class="status"></p>
+          <button id="btn-open-new-group" type="button" class="fab-bottom-left" title="New Group">+</button>
         </div>
 
         <div id="group-detail-view" class="hidden">
@@ -457,17 +459,118 @@
         </div>
       </section>
 
-      <!-- TAB: COLLECTION -->
+      <!-- TAB 3: SEARCH (INSTAGRAM-STYLE PLAYERS & PUBLIC DECKS) -->
+      <section id="tab-search" class="tab-panel">
+        <div id="search-main-view" class="card">
+          <div class="search-ig-bar">
+            <svg class="search-ig-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="7"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input
+              id="global-search-input"
+              type="text"
+              placeholder="Search players or public decks..."
+              autocomplete="off"
+            />
+          </div>
+
+          <div class="search-mode-tabs">
+            <button type="button" id="btn-search-tab-players" class="search-mode-btn active">Players</button>
+            <button type="button" id="btn-search-tab-decks" class="search-mode-btn">Public Decks</button>
+          </div>
+
+          <p id="global-search-status" class="status"></p>
+          <div id="global-search-results" class="search-results-list"></div>
+        </div>
+
+        <!-- PUBLIC PLAYER PROFILE VIEW -->
+        <div id="public-profile-view" class="hidden">
+          <div class="detail-header">
+            <button id="btn-back-to-search" type="button" class="btn back-btn">← Search</button>
+            <span class="muted">Player Profile</span>
+          </div>
+
+          <div class="card profile-hero-card">
+            <div class="profile-header">
+              <div id="pub-profile-avatar" class="profile-avatar">?</div>
+              <div class="profile-identity">
+                <h2 id="pub-profile-nickname">Player</h2>
+                <div id="pub-profile-since" class="profile-since"></div>
+              </div>
+            </div>
+            <p id="pub-profile-bio" class="profile-bio"></p>
+          </div>
+
+          <div class="profile-kpi-grid">
+            <div class="kpi-card">
+              <div class="kpi-label">Global Winrate</div>
+              <div id="pub-kpi-winrate" class="kpi-value">—</div>
+              <div id="pub-kpi-winrate-sub" class="kpi-sub">0W / 0M</div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-label">Total Matches</div>
+              <div id="pub-kpi-matches" class="kpi-value">0</div>
+              <div id="pub-kpi-matches-sub" class="kpi-sub">0 pers. · 0 group</div>
+            </div>
+          </div>
+
+          <div class="card profile-fav-deck-card">
+            <div class="kpi-label">Favorite Public Deck</div>
+            <div id="pub-fav-deck-name" class="profile-fav-deck-name">—</div>
+            <div id="pub-fav-deck-sub" class="muted">No public decks</div>
+          </div>
+
+          <div class="card">
+            <h3>Public Decks</h3>
+            <div id="pub-profile-decks-list" class="deck-cards-list"></div>
+          </div>
+
+          <div class="card">
+            <div class="profile-showcase-tabs">
+              <button type="button" id="btn-pub-tab-showcase" class="profile-tab-btn active">Showcase</button>
+              <button type="button" id="btn-pub-tab-wishlist" class="profile-tab-btn">Wishlist</button>
+            </div>
+            <div id="pub-profile-cards-grid" class="profile-flex-grid"></div>
+          </div>
+        </div>
+
+        <!-- PUBLIC DECK READ-ONLY VIEW -->
+        <div id="public-deck-view" class="hidden">
+          <div class="detail-header">
+            <button id="btn-back-from-pub-deck" type="button" class="btn back-btn">← Back</button>
+            <span id="pub-deck-count" class="muted"></span>
+          </div>
+
+          <div id="pub-deck-hero" class="detail-hero">
+            <div class="detail-hero-inner">
+              <div class="deck-hero-title-row">
+                <h2 id="pub-deck-title">Deck</h2>
+                <span id="pub-deck-ci" class="deck-ci-icons"></span>
+              </div>
+              <div class="deck-hero-bottom-row">
+                <span id="pub-deck-format" class="badge">Format</span>
+                <span id="pub-deck-owner" class="muted" style="font-size:12px;"></span>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <p id="pub-deck-status" class="status"></p>
+            <div id="pub-deck-cards-list" class="deck-cards-grouped"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 4: COLLECTION -->
       <section id="tab-my-collection" class="tab-panel">
         <div class="card">
-          <!-- PARTE ALTA: visibile solo nella lista espansioni -->
+          <!-- TOP OVERVIEW: visible only in sets list -->
           <div id="col-overview-top">
             <div class="decks-list-header">
               <h2>My Collection</h2>
               <div class="col-header-actions">
                 <button id="btn-open-col-import" type="button" class="deck-import-open-btn">Import</button>
-                <button id="btn-open-col-add" type="button" class="btn-circle-plus" title="Add Card">+</button>
-                <div class="col-search-divider"></div>
               </div>
             </div>
 
@@ -481,7 +584,6 @@
               <div class="col-kpi-box">
                 <div class="col-kpi-label">Value</div>
                 <div id="col-kpi-value" class="col-kpi-val green">€ 0.00</div>
-                
               </div>
               <div class="col-kpi-box">
                 <div class="col-kpi-label">Sets</div>
@@ -499,13 +601,16 @@
                 autocomplete="off"
               />
             </div>
+
+            <div class="col-search-divider"></div>
+            <button id="btn-open-col-add" type="button" class="fab-bottom-left" title="Add Card">+</button>
           </div>
 
           <p id="col-page-status" class="status"></p>
           <div id="col-cards-container" class="col-cards-container"></div>
         </div>
 
-        <!-- BARRA FLOTTANTE IN BASSO (visibile dentro un'espansione) -->
+        <!-- FLOATING BAR (visible inside an expansion) -->
         <div id="col-floating-bar" class="col-floating-bar hidden">
           <div id="col-sort-dropup" class="col-dropup">
             <button type="button" id="btn-col-sort-trigger" class="col-dropup-btn">
@@ -525,7 +630,6 @@
             <button type="button" id="btn-col-view-grid" class="seg-btn">Grid</button>
           </div>
         </div>
-        
 
         <!-- MODAL: ADD CARD TO COLLECTION -->
         <div id="col-add-modal" class="proposal-overlay hidden">
@@ -625,7 +729,8 @@
           </div>
         </div>
       </section>
-      <!-- TAB 3: SCANNER A TUTTO SCHERMO -->
+
+      <!-- TAB 5: FULLSCREEN SCANNER -->
       <section id="tab-collection" class="tab-panel">
         <div class="scanner-full-view">
           <div class="camera-viewport">
@@ -633,20 +738,20 @@
             <canvas id="quad-overlay" class="quad-overlay"></canvas>
 
             <div id="camera-placeholder" class="camera-placeholder">
-              <p class="muted">Fotocamera non attiva.</p>
-              <button id="btn-start-camera" type="button" class="btn primary">Attiva fotocamera</button>
+              <p class="muted">Camera not active.</p>
+              <button id="btn-start-camera" type="button" class="btn primary">Enable Camera</button>
             </div>
 
-            <!-- OVERLAY SUPERIORE: FILTRO ESPANSIONI + STATO -->
+            <!-- TOP OVERLAY: SET FILTER + STATUS -->
             <div class="scanner-top-overlay">
               <div id="scanner-sets-box" class="scanner-sets-box">
                 <div class="scanner-sets-header">
                   <button type="button" id="btn-toggle-sets-panel" class="scanner-sets-toggle">
-                    <span class="sets-label">🎯 Espansioni:</span>
-                    <span id="scanner-sets-summary" class="sets-summary">Tutte</span>
+                    <span class="sets-label">🎯 Sets:</span>
+                    <span id="scanner-sets-summary" class="sets-summary">All</span>
                     <span class="sets-caret">▾</span>
                   </button>
-                  <button type="button" id="btn-clear-scanner-sets" class="scanner-sets-clear">Tutte</button>
+                  <button type="button" id="btn-clear-scanner-sets" class="scanner-sets-clear">All</button>
                 </div>
 
                 <div id="scanner-sets-panel" class="scanner-sets-panel hidden">
@@ -654,50 +759,68 @@
                     id="scanner-sets-search"
                     type="text"
                     class="scanner-sets-search"
-                    placeholder="Cerca espansione o codice (es. MH3, BLB, LTR)..."
+                    placeholder="Search set or code (e.g. MH3, BLB, LTR)..."
                   />
                   <div id="scanner-sets-list" class="scanner-sets-list"></div>
                 </div>
               </div>
 
               <div class="camera-hud">
-                <span id="scan-state-badge" class="scan-badge">In attesa...</span>
+                <span id="scan-state-badge" class="scan-badge">Waiting...</span>
                 <div class="camera-hud-right">
-                  <span id="rejected-count-badge" class="scan-badge secondary">Scartate: 0</span>
+                  <span id="rejected-count-badge" class="scan-badge secondary">Rejected: 0</span>
                   <span id="scannerStatusBadge" class="status-badge disconnected">Offline</span>
                 </div>
               </div>
             </div>
 
-            <!-- OVERLAY INFERIORE: CONTROLLI RAPIDI SOPRA LA CAMERA -->
+            <!-- BOTTOM OVERLAY: QUEUE FOLDER + RESET + START -->
             <div class="scanner-bottom-overlay">
               <p id="collection-status" class="scanner-toast"></p>
               <div class="scanner-bottom-controls">
-                <select id="scan-finish-select" class="overlay-select">
-                  <option value="normal">Normale</option>
-                  <option value="foil">Foil</option>
-                </select>
-                <button id="btn-reset-rejected" type="button" class="overlay-btn">Reset scartate</button>
-                <button id="btnToggleScanner" type="button" class="overlay-btn accent">Avvia</button>
+                <button id="btn-open-scan-queue" type="button" class="overlay-btn queue-btn">
+                  📁 Scanned (<span id="scan-queue-count">0</span>)
+                </button>
+                <button id="btn-reset-rejected" type="button" class="overlay-btn">Reset Rejected</button>
+                <button id="btnToggleScanner" type="button" class="overlay-btn accent">Start</button>
               </div>
             </div>
           </div>
 
-          <!-- CARD PROPOSTA QUANDO VIENE RICONOSCIUTA UNA CARTA -->
+          <!-- CARD PROPOSAL MODAL -->
           <div id="proposal-modal" class="proposal-overlay hidden">
             <div class="proposal-card">
-              <img id="proposal-img" src="" alt="Anteprima carta" class="proposal-img hidden" />
-              <h2 id="proposal-name">Nome carta</h2>
+              <img id="proposal-img" src="" alt="Card preview" class="proposal-img hidden" />
+              <h2 id="proposal-name">Card Name</h2>
               <p id="proposal-meta" class="muted"></p>
 
-              <label for="proposal-edition-select">Edizione</label>
+              <label for="proposal-edition-select">Edition</label>
               <select id="proposal-edition-select">
-                <option value="">Nessuna edizione alternativa</option>
+                <option value="">No alternative editions</option>
               </select>
 
               <div class="proposal-actions">
                 <button id="btn-proposal-no" type="button" class="btn danger-btn">No</button>
-                <button id="btn-proposal-yes" type="button" class="btn success-btn">Sì</button>
+                <button id="btn-proposal-yes" type="button" class="btn success-btn">Yes</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- SCANNED CARDS QUEUE MODAL -->
+          <div id="scan-queue-modal" class="proposal-overlay hidden">
+            <div class="proposal-card modal-scroll-card scan-queue-card">
+              <div class="decks-list-header" style="margin-bottom:8px;">
+                <h2 style="margin:0;">Scanned Cards (<span id="scan-queue-modal-count">0</span>)</h2>
+                <button id="btn-close-scan-queue" type="button" class="btn small">Close</button>
+              </div>
+              <p class="muted" style="margin:0 0 10px;font-size:12px;">
+                Review, set Foil, change expansion or quantity, then tap OK to add all to your Collection.
+              </p>
+              <div id="scan-queue-list" class="scan-queue-list"></div>
+              <p id="scan-queue-status" class="status"></p>
+              <div class="proposal-actions" style="margin-top:12px;">
+                <button id="btn-clear-scan-queue" type="button" class="btn danger-btn">Clear</button>
+                <button id="btn-scan-queue-ok" type="button" class="btn success-btn">OK · Save All</button>
               </div>
             </div>
           </div>
@@ -706,70 +829,117 @@
         <canvas id="frame-send-canvas" class="hidden"></canvas>
       </section>
 
-      <!-- TAB 4: PROFILO GIOCATORE -->
+      <!-- TAB 6: PLAYER PROFILE -->
       <section id="tab-profile" class="tab-panel">
         <div class="card profile-hero-card">
           <div class="profile-header">
             <div id="profile-avatar" class="profile-avatar">?</div>
             <div class="profile-identity">
-              <h2 id="profile-nickname">Giocatore</h2>
+              <h2 id="profile-nickname">Player</h2>
               <div id="profile-email" class="muted"></div>
               <div id="profile-since" class="profile-since"></div>
             </div>
           </div>
-          <p id="profile-bio" class="profile-bio">Caricamento profilo...</p>
+          <p id="profile-bio" class="profile-bio">Loading profile...</p>
           <p id="profile-status" class="status"></p>
         </div>
 
         <div class="profile-kpi-grid">
           <div class="kpi-card">
-            <div class="kpi-label">Winrate Globale</div>
+            <div class="kpi-label">Global Winrate</div>
             <div id="kpi-winrate" class="kpi-value">—</div>
-            <div id="kpi-winrate-sub" class="kpi-sub">0V / 0P</div>
+            <div id="kpi-winrate-sub" class="kpi-sub">0W / 0M</div>
           </div>
           <div class="kpi-card">
-            <div class="kpi-label">Partite Totali</div>
+            <div class="kpi-label">Total Matches</div>
             <div id="kpi-matches" class="kpi-value">0</div>
-            <div id="kpi-matches-sub" class="kpi-sub">0 pers. · 0 gruppi</div>
+            <div id="kpi-matches-sub" class="kpi-sub">0 pers. · 0 group</div>
           </div>
           <div class="kpi-card">
-            <div class="kpi-label">Mazzi</div>
+            <div class="kpi-label">Decks</div>
             <div id="kpi-decks" class="kpi-value">0</div>
-            <div id="kpi-decks-sub" class="kpi-sub">Personali</div>
+            <div id="kpi-decks-sub" class="kpi-sub">Personal</div>
           </div>
           <div class="kpi-card">
-            <div class="kpi-label">Amici</div>
+            <div class="kpi-label">Friends</div>
             <div id="kpi-friends" class="kpi-value">0</div>
-            <div id="kpi-friends-sub" class="kpi-sub">Connessi</div>
+            <div id="kpi-friends-sub" class="kpi-sub">Connected</div>
           </div>
         </div>
 
         <div class="card profile-fav-deck-card">
-          <div class="kpi-label">Mazzo Preferito</div>
-          <div id="profile-fav-deck-name" class="profile-fav-deck-name">Nessuno</div>
-          <div id="profile-fav-deck-sub" class="muted">0 partite</div>
+          <div class="kpi-label">Favorite Deck</div>
+          <div id="profile-fav-deck-name" class="profile-fav-deck-name">None</div>
+          <div id="profile-fav-deck-sub" class="muted">0 matches</div>
         </div>
 
         <div class="card">
-          <h3>Vetrina Carte Preferite</h3>
+          <div class="profile-showcase-tabs">
+            <button type="button" id="btn-profile-tab-showcase" class="profile-tab-btn active">Showcase</button>
+            <button type="button" id="btn-profile-tab-wishlist" class="profile-tab-btn">Wishlist</button>
+          </div>
           <div id="profile-flex-grid" class="profile-flex-grid"></div>
         </div>
 
-        <button id="btn-logout" type="button" class="btn profile-logout-btn">Esci dall'account</button>
+        <button id="btn-logout" type="button" class="btn profile-logout-btn">Sign Out</button>
       </section>
 
-      <!-- BOTTOM NAVIGATION -->
+      <!-- BOTTOM NAVIGATION (6 TABS WITH ICONS + LABELS) -->
       <nav class="bottom-nav">
-        <button class="nav-btn active" data-tab="tab-decks">Decks</button>
-        <button class="nav-btn" data-tab="tab-groups">Groups</button>
-        <button class="nav-btn" data-tab="tab-my-collection">Collection</button>
-        <button class="nav-btn" data-tab="tab-collection">Scanner</button>
-        <button class="nav-btn" data-tab="tab-profile">Profile</button>
+        <button class="nav-btn active" data-tab="tab-decks">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="4" y="4" width="12" height="16" rx="2"></rect>
+            <path d="M16 7h2a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H9"></path>
+          </svg>
+          <span>Decks</span>
+        </button>
+        <button class="nav-btn" data-tab="tab-groups">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+            <circle cx="9" cy="7" r="4"></circle>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+          </svg>
+          <span>Groups</span>
+        </button>
+        <button class="nav-btn" data-tab="tab-search">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="7"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <span>Search</span>
+        </button>
+        <button class="nav-btn" data-tab="tab-my-collection">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="7" height="7" rx="1"></rect>
+            <rect x="14" y="3" width="7" height="7" rx="1"></rect>
+            <rect x="3" y="14" width="7" height="7" rx="1"></rect>
+            <rect x="14" y="14" width="7" height="7" rx="1"></rect>
+          </svg>
+          <span>Collection</span>
+        </button>
+        <button class="nav-btn" data-tab="tab-collection">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M4 7V5a2 2 0 0 1 2-2h2"></path>
+            <path d="M20 7V5a2 2 0 0 0-2-2h-2"></path>
+            <path d="M4 17v2a2 2 0 0 0 2 2h2"></path>
+            <path d="M20 17v2a2 2 0 0 1-2 2h-2"></path>
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+          <span>Scanner</span>
+        </button>
+        <button class="nav-btn" data-tab="tab-profile">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+            <circle cx="12" cy="7" r="4"></circle>
+          </svg>
+          <span>Profile</span>
+        </button>
       </nav>
     </main>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="app.js?v=19"></script>
+  <script src="app.js?v=20"></script>
 </body>
 </html>
