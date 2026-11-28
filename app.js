@@ -20,7 +20,7 @@ const DEFAULT_SCANNER_WS_URL = "wss://manastat-scanner-server.onrender.com/ws/sc
 const STORAGE_SETS_KEY = "manastat_scanner_selected_sets";
 
 // Badge versione sempre visibile sopra la barra di navigazione
-const APP_UI_VERSION = "v3.5";
+const APP_UI_VERSION = "v3.6";
 let connectedServerVersion = "";
 
 function renderVersionBadge() {
@@ -4555,7 +4555,6 @@ $("btn-col-reset-filters")?.addEventListener("click", () => {
   if ($("col-filter-rarity")) $("col-filter-rarity").value = "ALL";
   if ($("col-filter-finish")) $("col-filter-finish").value = "ALL";
   if ($("col-sort-select")) $("col-sort-select").value = "set";
-  colSelectedColors.clear();
   renderCollectionList();
 });
 
