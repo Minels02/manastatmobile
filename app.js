@@ -20,7 +20,7 @@ const DEFAULT_SCANNER_WS_URL = "wss://manastat-scanner-server.onrender.com/ws/sc
 const STORAGE_SETS_KEY = "manastat_scanner_selected_sets";
 
 // Badge versione sempre visibile sopra la barra di navigazione
-const APP_UI_VERSION = "v3.7";
+const APP_UI_VERSION = "v3.8";
 let connectedServerVersion = "";
 
 function renderVersionBadge() {
@@ -4260,11 +4260,6 @@ function updateCollectionKpis() {
 
 function getFilteredCollectionItems() {
   const q = ($("col-search-input")?.value || "").trim().toLowerCase();
-  const numFilter = ($("col-filter-number")?.value || "").trim().toLowerCase();
-  const priceFilter = $("col-filter-price")?.value || "ALL";
-  const rarityFilter = $("col-filter-rarity")?.value || "ALL";
-  const colorFilter = $("col-filter-color")?.value || "ALL";
-  const typeFilter = $("col-filter-type")?.value || "ALL";
 
   return myCollectionItems.filter((it) => {
     if (colActiveSetCode && String(it.set_code || "").toUpperCase() !== colActiveSetCode) {
@@ -4274,40 +4269,33 @@ function getFilteredCollectionItems() {
       const hay = `${it.name || ""} ${it.set_name || ""} ${it.set_code || ""} ${it.collector_number || ""} ${it.type_line || ""}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
-    if (numFilter) {
-      const cn = String(it.collector_number || "").toLowerCase();
-      if (!cn.includes(numFilter)) return false;
-    }
-    if (priceFilter !== "ALL") {
-      const p = getCollectionUnitPrice(it);
-      if (p === null) return false;
-      if (priceFilter === "lt1" && !(p < 1)) return false;
-      if (priceFilter === "1to5" && !(p >= 1 && p <= 5)) return false;
-      if (priceFilter === "5to20" && !(p > 5 && p <= 20)) return false;
-      if (priceFilter === "gt20" && !(p > 20)) return false;
-    }
-    if (rarityFilter !== "ALL" && String(it.rarity || "").toLowerCase() !== rarityFilter) {
-      return false;
-    }
-    if (colorFilter !== "ALL") {
-      const cols = Array.isArray(it.colors) ? it.colors.map((c) => String(c).toUpperCase()) : [];
-      if (colorFilter === "C" && cols.length !== 0) return false;
-      if (colorFilter === "M" && cols.length < 2) return false;
-      if (["W", "U", "B", "R", "G"].includes(colorFilter) && !cols.includes(colorFilter)) return false;
-    }
-    if (typeFilter !== "ALL") {
-      const tl = String(it.type_line || "").toLowerCase();
-      if (!tl.includes(typeFilter)) return false;
-    }
     return true;
   });
 }
 
+function getColorSortRank(colors) {
+  const arr = Array.isArray(colors) ? colors.map((c) => String(c).toUpperCase()) : [];
+  if (arr.length === 0) return 6; // Colorless
+  if (arr.length > 1) return 5;   // Multicolor
+  const order = { W: 0, U: 1, B: 2, R: 3, G: 4 };
+  return order[arr[0]] ?? 7;
+}
+
+function getTypeSortRank(typeLine) {
+  const tl = String(typeLine || "").toLowerCase();
+  if (tl.includes("creature")) return 0;
+  if (tl.includes("planeswalker")) return 1;
+  if (tl.includes("instant")) return 2;
+  if (tl.includes("sorcery")) return 3;
+  if (tl.includes("artifact")) return 4;
+  if (tl.includes("enchantment")) return 5;
+  if (tl.includes("battle")) return 6;
+  if (tl.includes("land")) return 7;
+  return 8;
+}
+
 function sortCollectionSlice(list, sortMode) {
   const arr = list.slice();
-  if (sortMode === "alpha") {
-    return arr.sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "en"));
-  }
   if (sortMode === "price") {
     return arr.sort((a, b) => {
       const pa = (getCollectionUnitPrice(a) || 0) * Math.max(1, Number(a.quantity || 1));
@@ -4324,15 +4312,23 @@ function sortCollectionSlice(list, sortMode) {
       return String(a.name || "").localeCompare(String(b.name || ""), "en");
     });
   }
-  if (sortMode === "qty") {
+  if (sortMode === "color") {
     return arr.sort((a, b) => {
-      const qa = Number(a.quantity || 1);
-      const qb = Number(b.quantity || 1);
-      if (qb !== qa) return qb - qa;
+      const ca = getColorSortRank(a.colors);
+      const cb = getColorSortRank(b.colors);
+      if (ca !== cb) return ca - cb;
       return String(a.name || "").localeCompare(String(b.name || ""), "en");
     });
   }
-  // Default: collector number
+  if (sortMode === "type") {
+    return arr.sort((a, b) => {
+      const ta = getTypeSortRank(a.type_line);
+      const tb = getTypeSortRank(b.type_line);
+      if (ta !== tb) return ta - tb;
+      return String(a.name || "").localeCompare(String(b.name || ""), "en");
+    });
+  }
+  // Default: numero di espansione (collector number)
   return arr.sort((a, b) => {
     const [na, sa] = parseCollectorNumSort(a.collector_number);
     const [nb, sbStr] = parseCollectorNumSort(b.collector_number);
@@ -4345,8 +4341,7 @@ function sortCollectionSlice(list, sortMode) {
 window.openCollectionSet = function (setCode) {
   colActiveSetCode = String(setCode || "").toUpperCase();
   $("col-overview-top")?.classList.add("hidden");
-  $("btn-col-set-filters")?.classList.remove("hidden");
-  $("col-filters-panel")?.classList.add("hidden");
+  $("col-floating-bar")?.classList.remove("hidden");
   renderCollectionList();
   window.scrollTo({ top: 0, behavior: "instant" });
 };
@@ -4354,8 +4349,7 @@ window.openCollectionSet = function (setCode) {
 window.closeCollectionSet = function () {
   colActiveSetCode = null;
   $("col-overview-top")?.classList.remove("hidden");
-  $("btn-col-set-filters")?.classList.add("hidden");
-  $("col-filters-panel")?.classList.add("hidden");
+  $("col-floating-bar")?.classList.add("hidden");
   renderCollectionList();
 };
 
@@ -4465,6 +4459,7 @@ function renderCollectionList() {
             <div class="col-grid-img-wrap" onclick="openCollectionCardDetail('${escapeHtml(it.id)}')">
               ${img ? `<img src="${escapeHtml(img)}" alt="${escapeHtml(it.name || "")}" loading="lazy" />` : `<div class="deck-stack-fallback">${escapeHtml(it.name || "")}</div>`}
               ${it.foil ? `<span class="col-foil-overlay-badge">FOIL</span>` : ""}
+              <span class="col-qty-overlay-badge" data-col-qty-id="${escapeHtml(it.id)}">${qty}x</span>
               ${priceTxt ? `<span class="col-price-overlay-badge" data-col-price-id="${escapeHtml(it.id)}">${priceTxt}</span>` : ""}
             </div>
             <div class="col-grid-card-name" onclick="openCollectionCardDetail('${escapeHtml(it.id)}')">${escapeHtml(it.name || "")}</div>
@@ -4542,7 +4537,7 @@ window.changeCollectionQty = async function (itemId, delta) {
   // In-place update (zero flash)
   item.quantity = newQty;
   document.querySelectorAll(`[data-col-qty-id="${item.id}"]`).forEach((el) => {
-    el.textContent = String(newQty);
+    el.textContent = el.classList.contains("col-qty-overlay-badge") ? `${newQty}x` : String(newQty);
   });
   const unitP = getCollectionUnitPrice(item);
   if (unitP !== null) {
@@ -4574,45 +4569,7 @@ window.changeCollectionQty = async function (itemId, delta) {
 
 // Filter & View event listeners
 $("col-search-input")?.addEventListener("input", renderCollectionList);
-$("col-filter-number")?.addEventListener("input", renderCollectionList);
-$("col-filter-price")?.addEventListener("change", renderCollectionList);
-$("col-filter-rarity")?.addEventListener("change", renderCollectionList);
-$("col-filter-color")?.addEventListener("change", renderCollectionList);
-$("col-filter-type")?.addEventListener("change", renderCollectionList);
 $("col-sort-select")?.addEventListener("change", renderCollectionList);
-
-function toggleCollectionFiltersPanel(e) {
-  e?.stopPropagation();
-  $("col-filters-panel")?.classList.toggle("hidden");
-}
-
-$("btn-col-toggle-filters")?.addEventListener("click", toggleCollectionFiltersPanel);
-$("btn-col-set-filters")?.addEventListener("click", toggleCollectionFiltersPanel);
-
-// Cliccando fuori dal pannello filtri, i filtri restano applicati e il pannello si chiude
-document.addEventListener("click", (e) => {
-  const panel = $("col-filters-panel");
-  if (!panel || panel.classList.contains("hidden")) return;
-  const btn1 = $("btn-col-toggle-filters");
-  const btn2 = $("btn-col-set-filters");
-  if (!panel.contains(e.target) && e.target !== btn1 && e.target !== btn2) {
-    panel.classList.add("hidden");
-    renderCollectionList();
-  }
-});
-
-$("btn-col-reset-filters")?.addEventListener("click", () => {
-  if ($("col-search-input")) $("col-search-input").value = "";
-  if ($("col-filter-number")) $("col-filter-number").value = "";
-  if ($("col-filter-price")) $("col-filter-price").value = "ALL";
-  if ($("col-filter-rarity")) $("col-filter-rarity").value = "ALL";
-  if ($("col-filter-color")) $("col-filter-color").value = "ALL";
-  if ($("col-filter-type")) $("col-filter-type").value = "ALL";
-  if ($("col-sort-select")) $("col-sort-select").value = "set";
-  renderCollectionList();
-});
-
-
 
 $("btn-col-view-list")?.addEventListener("click", () => {
   colViewMode = "list";
