@@ -4161,7 +4161,7 @@ $("btn-send-group-invite")?.addEventListener("click", async () => {
 
 // ---- MY COLLECTION PAGE (DESKTOP PARITY) ----
 let myCollectionItems = [];
-let colSelectedColors = new Set();
+let colActiveSetCode = null; // null = lista espansioni, "SET" = carte di quell'espansione
 let colViewMode = "list"; // "list" | "grid"
 let colActiveDetailId = null;
 
@@ -4260,7 +4260,7 @@ function updateCollectionKpis() {
 
 function getFilteredCollectionItems() {
   const q = ($("col-search-input")?.value || "").trim().toLowerCase();
-  const setFilter = $("col-filter-set")?.value || "ALL";
+  const setFilter = colActiveSetCode || $("col-filter-set")?.value || "ALL";
   const rarityFilter = $("col-filter-rarity")?.value || "ALL";
   const finishFilter = $("col-filter-finish")?.value || "ALL";
 
@@ -4273,17 +4273,6 @@ function getFilteredCollectionItems() {
     if (rarityFilter !== "ALL" && String(it.rarity || "").toLowerCase() !== rarityFilter) return false;
     if (finishFilter === "foil" && !it.foil) return false;
     if (finishFilter === "nonfoil" && it.foil) return false;
-
-    if (colSelectedColors.size > 0) {
-      const cols = Array.isArray(it.colors) ? it.colors.map((c) => String(c).toUpperCase()) : [];
-      const isColorless = cols.length === 0;
-      let match = false;
-      for (const wanted of colSelectedColors) {
-        if (wanted === "C" && isColorless) match = true;
-        else if (cols.includes(wanted)) match = true;
-      }
-      if (!match) return false;
-    }
     return true;
   });
 }
@@ -4327,130 +4316,164 @@ function sortCollectionSlice(list, sortMode) {
   });
 }
 
+window.openCollectionSet = function (setCode) {
+  colActiveSetCode = String(setCode || "").toUpperCase();
+  renderCollectionList();
+};
+
+window.closeCollectionSet = function () {
+  colActiveSetCode = null;
+  renderCollectionList();
+};
+
 function renderCollectionList() {
   const container = $("col-cards-container");
   if (!container) return;
 
-  const filtered = getFilteredCollectionItems();
-  const shownCopies = filtered.reduce((s, it) => s + Math.max(1, Number(it.quantity || 1)), 0);
-  if ($("col-shown-count")) {
-    $("col-shown-count").textContent = `${shownCopies} cards (${filtered.length} entries)`;
-  }
-
   if (!myCollectionItems.length) {
+    if ($("col-shown-count")) $("col-shown-count").textContent = "0 cards";
     container.innerHTML = `<p class="muted">Your collection is empty. Tap + to add cards, Import a CSV, or use the Scanner tab.</p>`;
     return;
   }
 
-  if (!filtered.length) {
-    container.innerHTML = `<p class="muted">No cards match the current filters.</p>`;
-    return;
-  }
+  const filtered = getFilteredCollectionItems();
 
-  const sortMode = $("col-sort-select")?.value || "set";
-
-  // Group by Set when sorting by set, otherwise flat sorted list
-  const sections = [];
-  if (sortMode === "set") {
+  // 1) VISTA INIZIALE: LISTA ESPANSIONI
+  if (!colActiveSetCode) {
     const bySet = new Map();
     for (const it of filtered) {
       const code = String(it.set_code || "OTHER").toUpperCase();
       if (!bySet.has(code)) {
-        const sec = { code, name: it.set_name || code, items: [] };
-        bySet.set(code, sec);
-        sections.push(sec);
+        bySet.set(code, {
+          code,
+          name: it.set_name || code,
+          copies: 0,
+          unique: 0,
+          value: 0,
+        });
       }
-      bySet.get(code).items.push(it);
+      const sec = bySet.get(code);
+      const qty = Math.max(1, Number(it.quantity || 1));
+      const p = getCollectionUnitPrice(it);
+      sec.copies += qty;
+      sec.unique += 1;
+      if (p !== null) sec.value += p * qty;
     }
-    sections.sort((a, b) => a.name.localeCompare(b.name, "en"));
-  } else {
-    sections.push({ code: "", name: "", items: filtered });
+
+    const setsList = Array.from(bySet.values()).sort((a, b) =>
+      a.name.localeCompare(b.name, "en")
+    );
+
+    if ($("col-shown-count")) {
+      $("col-shown-count").textContent = `${setsList.length} sets`;
+    }
+
+    if (!setsList.length) {
+      container.innerHTML = `<p class="muted">No sets match the current filters.</p>`;
+      return;
+    }
+
+    container.innerHTML = setsList
+      .map(
+        (sec) => `
+          <div class="col-set-card" onclick="openCollectionSet('${escapeHtml(sec.code)}')">
+            <div class="col-set-card-left">
+              <span class="col-set-code">${escapeHtml(sec.code)}</span>
+              <span class="col-set-card-name">${escapeHtml(sec.name)}</span>
+            </div>
+            <span class="col-set-card-meta">${sec.copies} · € ${sec.value.toFixed(2)}</span>
+          </div>
+        `
+      )
+      .join("");
+    return;
   }
 
-  container.innerHTML = sections
-    .map((sec) => {
-      const sorted = sortCollectionSlice(sec.items, sortMode);
-      const secCopies = sorted.reduce((s, it) => s + Math.max(1, Number(it.quantity || 1)), 0);
-      const secVal = sorted.reduce((s, it) => {
+  // 2) VISTA ESPANSIONE APERTA: CARTE DEL SET SELEZIONATO
+  const shownCopies = filtered.reduce((s, it) => s + Math.max(1, Number(it.quantity || 1)), 0);
+  const setVal = filtered.reduce((s, it) => {
+    const p = getCollectionUnitPrice(it);
+    return s + (p !== null ? p * Math.max(1, Number(it.quantity || 1)) : 0);
+  }, 0);
+  const setName = filtered[0]?.set_name || colActiveSetCode;
+
+  if ($("col-shown-count")) {
+    $("col-shown-count").textContent = `${shownCopies} cards (${filtered.length} entries)`;
+  }
+
+  const backBarHtml = `
+    <div class="col-active-set-bar">
+      <button type="button" class="col-back-sets-btn" onclick="closeCollectionSet()">← Sets</button>
+      <div class="col-set-left" style="min-width:0;">
+        <span class="col-set-code">${escapeHtml(colActiveSetCode)}</span>
+        <span class="col-set-name">${escapeHtml(setName)}</span>
+      </div>
+      <span class="col-set-right">€ ${setVal.toFixed(2)}</span>
+    </div>
+  `;
+
+  if (!filtered.length) {
+    container.innerHTML = `${backBarHtml}<p class="muted">No cards in this set match the current filters.</p>`;
+    return;
+  }
+
+  const sortMode = $("col-sort-select")?.value || "set";
+  const sorted = sortCollectionSlice(filtered, sortMode);
+
+  if (colViewMode === "grid") {
+    const tiles = sorted
+      .map((it) => {
+        const qty = Math.max(1, Number(it.quantity || 1));
+        const img = it.card_image_url || toNormalCardUrl(it.image_url || "");
         const p = getCollectionUnitPrice(it);
-        return s + (p !== null ? p * Math.max(1, Number(it.quantity || 1)) : 0);
-      }, 0);
-
-      const headerHtml = sec.code
-        ? `
-            <div class="col-set-header">
-              <div class="col-set-left">
-                <span class="col-set-code">${escapeHtml(sec.code)}</span>
-                <span class="col-set-name">${escapeHtml(sec.name)}</span>
-              </div>
-              <span class="col-set-right">${secCopies} · € ${secVal.toFixed(2)}</span>
+        const priceTxt = p !== null ? formatEur(p * qty) : "";
+        return `
+          <div class="col-grid-tile ${it.foil ? "is-foil" : ""}">
+            <div class="col-grid-img-wrap" onclick="openCollectionCardDetail('${escapeHtml(it.id)}')">
+              ${img ? `<img src="${escapeHtml(img)}" alt="${escapeHtml(it.name || "")}" loading="lazy" />` : `<div class="deck-stack-fallback">${escapeHtml(it.name || "")}</div>`}
+              ${it.foil ? `<span class="col-foil-overlay-badge">FOIL</span>` : ""}
+              ${priceTxt ? `<span class="col-price-overlay-badge" data-col-price-id="${escapeHtml(it.id)}">${priceTxt}</span>` : ""}
             </div>
-          `
-        : "";
+          </div>
+        `;
+      })
+      .join("");
+    container.innerHTML = `${backBarHtml}<div class="col-grid">${tiles}</div>`;
+    return;
+  }
 
-      if (colViewMode === "grid") {
-        const tiles = sorted
-          .map((it) => {
-            const qty = Math.max(1, Number(it.quantity || 1));
-            const img = it.card_image_url || toNormalCardUrl(it.image_url || "");
-            const p = getCollectionUnitPrice(it);
-            const priceTxt = p !== null ? formatEur(p * qty) : "—";
-            return `
-              <div class="col-grid-tile ${it.foil ? "is-foil" : ""}">
-                <div class="col-grid-img-wrap" onclick="openCollectionCardDetail('${escapeHtml(it.id)}')">
-                  ${img ? `<img src="${escapeHtml(img)}" alt="${escapeHtml(it.name || "")}" loading="lazy" />` : `<div class="deck-stack-fallback">${escapeHtml(it.name || "")}</div>`}
-                  ${it.foil ? `<span class="col-foil-overlay-badge">FOIL</span>` : ""}
-                </div>
-                <div class="deck-search-tile-name">${escapeHtml(it.name || "")}</div>
-                <div class="col-grid-footer">
-                  <span class="card-price-inline" data-col-price-id="${escapeHtml(it.id)}">${priceTxt}</span>
-                  <div class="deck-qty-controls">
-                    <button type="button" class="deck-qty-btn" onclick="changeCollectionQty('${escapeHtml(it.id)}', -1)">−</button>
-                    <span class="deck-qty-num" data-col-qty-id="${escapeHtml(it.id)}">${qty}</span>
-                    <button type="button" class="deck-qty-btn" onclick="changeCollectionQty('${escapeHtml(it.id)}', 1)">+</button>
-                  </div>
-                </div>
-              </div>
-            `;
-          })
-          .join("");
-        return `${headerHtml}<div class="col-grid">${tiles}</div>`;
-      }
-
-      const rows = sorted
-        .map((it) => {
-          const qty = Math.max(1, Number(it.quantity || 1));
-          const p = getCollectionUnitPrice(it);
-          const priceTxt = p !== null ? formatEur(p * qty) : "";
-          const rarCls = String(it.rarity || "common").toLowerCase();
-          const setMeta = `${String(it.set_code || "").toUpperCase()}${it.collector_number ? ` #${it.collector_number}` : ""}`;
-          return `
-            <div class="deck-card-row">
-              <div class="deck-card-main" onclick="openCollectionCardDetail('${escapeHtml(it.id)}')">
-                <div class="deck-card-name-line">
-                  <span class="col-rarity-dot ${escapeHtml(rarCls)}"></span>
-                  <span class="deck-card-name">${escapeHtml(it.name || "")}</span>
-                  ${it.foil ? `<span class="col-foil-pill">FOIL</span>` : ""}
-                </div>
-                <div class="deck-card-subline">
-                  <span class="muted" style="font-size:11px;">${escapeHtml(setMeta)}</span>
-                  ${renderManaPipsHtml(it.mana_cost) ? `<div class="deck-card-mana">${renderManaPipsHtml(it.mana_cost)}</div>` : ""}
-                  ${priceTxt ? `<span class="card-price-inline" data-col-price-id="${escapeHtml(it.id)}">${priceTxt}</span>` : ""}
-                </div>
-              </div>
-              <div class="deck-qty-controls">
-                <button type="button" class="deck-qty-btn" onclick="changeCollectionQty('${escapeHtml(it.id)}', -1)">−</button>
-                <span class="deck-qty-num" data-col-qty-id="${escapeHtml(it.id)}">${qty}</span>
-                <button type="button" class="deck-qty-btn" onclick="changeCollectionQty('${escapeHtml(it.id)}', 1)">+</button>
-              </div>
+  const rows = sorted
+    .map((it) => {
+      const qty = Math.max(1, Number(it.quantity || 1));
+      const p = getCollectionUnitPrice(it);
+      const priceTxt = p !== null ? formatEur(p * qty) : "";
+      const rarCls = String(it.rarity || "common").toLowerCase();
+      const setMeta = `${String(it.set_code || "").toUpperCase()}${it.collector_number ? ` #${it.collector_number}` : ""}`;
+      return `
+        <div class="deck-card-row">
+          <div class="deck-card-main" onclick="openCollectionCardDetail('${escapeHtml(it.id)}')">
+            <div class="deck-card-name-line">
+              <span class="col-rarity-dot ${escapeHtml(rarCls)}"></span>
+              <span class="deck-card-name">${escapeHtml(it.name || "")}</span>
+              ${it.foil ? `<span class="col-foil-pill">FOIL</span>` : ""}
             </div>
-          `;
-        })
-        .join("");
-
-      return `${headerHtml}${rows}`;
+            <div class="deck-card-subline">
+              <span class="muted" style="font-size:11px;">${escapeHtml(setMeta)}</span>
+              ${renderManaPipsHtml(it.mana_cost) ? `<div class="deck-card-mana">${renderManaPipsHtml(it.mana_cost)}</div>` : ""}
+              ${priceTxt ? `<span class="card-price-inline" data-col-price-id="${escapeHtml(it.id)}">${priceTxt}</span>` : ""}
+            </div>
+          </div>
+          <div class="deck-qty-controls">
+            <button type="button" class="deck-qty-btn" onclick="changeCollectionQty('${escapeHtml(it.id)}', -1)">−</button>
+            <span class="deck-qty-num" data-col-qty-id="${escapeHtml(it.id)}">${qty}</span>
+            <button type="button" class="deck-qty-btn" onclick="changeCollectionQty('${escapeHtml(it.id)}', 1)">+</button>
+          </div>
+        </div>
+      `;
     })
     .join("");
+
+  container.innerHTML = `${backBarHtml}${rows}`;
 }
 
 window.changeCollectionQty = async function (itemId, delta) {
@@ -4533,23 +4556,10 @@ $("btn-col-reset-filters")?.addEventListener("click", () => {
   if ($("col-filter-finish")) $("col-filter-finish").value = "ALL";
   if ($("col-sort-select")) $("col-sort-select").value = "set";
   colSelectedColors.clear();
-  document.querySelectorAll(".col-color-btn").forEach((b) => b.classList.remove("active"));
   renderCollectionList();
 });
 
-document.querySelectorAll(".col-color-btn").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    const col = btn.dataset.colColor;
-    if (colSelectedColors.has(col)) {
-      colSelectedColors.delete(col);
-      btn.classList.remove("active");
-    } else {
-      colSelectedColors.add(col);
-      btn.classList.add("active");
-    }
-    renderCollectionList();
-  });
-});
+
 
 $("btn-col-view-list")?.addEventListener("click", () => {
   colViewMode = "list";
@@ -4601,16 +4611,13 @@ $("btn-col-detail-plus")?.addEventListener("click", () => {
   if (colActiveDetailId) changeCollectionQty(colActiveDetailId, 1);
 });
 
-$("btn-col-detail-delete")?.addEventListener("click", async () => {
-  if (!colActiveDetailId) return;
-  const item = myCollectionItems.find((x) => String(x.id) === String(colActiveDetailId));
-  if (!item) return;
-  await changeCollectionQty(item.id, -Math.max(1, Number(item.quantity || 1)));
-});
 
-$("btn-col-detail-close")?.addEventListener("click", () => {
-  colActiveDetailId = null;
-  $("col-detail-modal")?.classList.add("hidden");
+
+$("col-detail-modal")?.addEventListener("click", (e) => {
+  if (e.target === $("col-detail-modal")) {
+    colActiveDetailId = null;
+    $("col-detail-modal")?.classList.add("hidden");
+  }
 });
 
 // ---- ADD CARD TO COLLECTION MODAL (SEARCH -> EDITION + FOIL + QTY) ----
